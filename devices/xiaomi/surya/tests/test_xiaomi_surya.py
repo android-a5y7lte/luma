@@ -36,12 +36,18 @@ class SuryaProfile(unittest.TestCase):
         self.assertEqual(boot['dtbo']['policy'], 'blank')
         self.assertEqual(boot['dtbo']['partitions'], ['dtbo'])
 
-    def test_install_guide_only_ram_boots(self):
+    def test_install_guide_writes_only_dtbo(self):
+        # Stage 1 RAM-boots; the only partition the guide writes is dtbo
+        # (erased, and restored from the user's own backup).
         guide = (DEVICE / 'INSTALL.md').read_text()
         commands = re.findall(r'^fastboot .*$', guide, re.M)
         self.assertTrue(commands)
+        allowed = {'fastboot erase dtbo',
+                   'fastboot flash dtbo surya-backup-dtbo.img'}
         for command in commands:
-            self.assertNotRegex(command, r'\b(flash|erase|format)\b', command)
+            command = command.split('#')[0].strip()
+            if re.search(r'\b(flash|erase|format)\b', command):
+                self.assertIn(command, allowed)
 
     def test_firmware_manifest_is_exact(self):
         device = load('device.toml')

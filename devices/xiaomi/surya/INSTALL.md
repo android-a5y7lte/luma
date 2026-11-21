@@ -11,10 +11,13 @@ need a different device tree; do not boot this image on them.
 
 ## What works
 
-Bring-up has not started on hardware yet. The kernel and firmware come from the
-sm7150-mainline project, where postmarketOS reports display, touch, GPU,
-Wi-Fi, Bluetooth, charging and modem working, with microphone/earpiece audio
-and cameras not working. Expect at least the same gaps here.
+Stage 1 was booted on the maintainer's POCO X3 NFC (Huaxing) on 2026-11-21:
+kernel 7.1.0-rc3 from sm7150-mainline with Luma's options, started from
+U-Boot. Working: all eight CPUs, display (msm DPU, framebuffer console),
+UFS storage, USB networking (NCM gadget, 172.16.42.1). The Novatek touch
+controller is detected but has no firmware in stage 1, nor do the modem,
+audio DSP, Wi-Fi or GPU. postmarketOS reports microphone/earpiece audio and
+cameras not working on mainline; expect the same here.
 
 ## Before you start
 
@@ -27,24 +30,53 @@ and cameras not working. Expect at least the same gaps here.
 4. Install `fastboot` on your computer and boot the phone to fastboot
    (Volume Down + Power).
 
-## Stage 1: RAM boot (nothing is written)
+## Stage 1: RAM boot through U-Boot
 
-Download `luma-surya-stage1-huaxing.img` from the latest "surya build" run
-(GitHub, Actions tab, the run, Artifacts), unzip it, then:
+Xiaomi's bootloader applies the overlays in the `dtbo` partition to the
+device tree it boots. They are written for Android's device tree, and with
+the mainline one the boot fails: the phone is back in fastboot after
+`Booting OKAY`. As for postmarketOS, `dtbo` must be erased once. Android
+needs `dtbo`, so back it up first and restore it to go back. Nothing else
+is written.
+
+Back up `dtbo` from a recovery with root adb (LineageOS recovery, TWRP or
+OrangeFox), then check that both hashes match:
+
+```sh
+adb shell 'dd if=/dev/block/by-name/dtbo of=/tmp/dtbo.img && sha256sum /tmp/dtbo.img'
+adb pull /tmp/dtbo.img surya-backup-dtbo.img
+sha256sum surya-backup-dtbo.img
+adb reboot bootloader
+```
+
+Erase `dtbo` and RAM-boot U-Boot (`u-boot-surya-huaxing.img` from the
+build's U-Boot artifact):
 
 ```sh
 fastboot getvar product            # must print: surya
-fastboot boot luma-surya-stage1-huaxing.img
+fastboot erase dtbo
+fastboot boot u-boot-surya-huaxing.img
 ```
 
-`fastboot boot` loads the image into memory only; the phone's partitions are
-not changed, and holding Power for 10 seconds returns to Android.
+U-Boot finds no Luma install and stops at "Press any key to continue".
+Press a volume key, choose "Enable fastboot mode" with the volume keys and
+Power, then RAM-boot Linux through U-Boot's fastboot (it may need root on
+the computer, as U-Boot uses different USB IDs):
 
-Stage 1 is a bring-up image, not Luma yet: a kernel and a tiny debug
-initramfs. A good result is the text "Luma on POCO X3 NFC: stage 1" on the
-screen, and a USB network device on your computer. Give your computer
-172.16.42.2/24 on it if DHCP does not, then `telnet 172.16.42.1` for a shell;
-`dmesg` shows how far the hardware came up.
+```sh
+fastboot boot luma-surya-stage1-huaxing-v2.img
+```
+
+A good result is "Luma on POCO X3 NFC: stage 1" on the screen and a USB
+network device on the computer. Give it 172.16.42.2/24, then
+`telnet 172.16.42.1` for a shell; `dmesg` shows how far the hardware came
+up. Holding Power for 10 seconds restarts the phone.
+
+To go back to Android:
+
+```sh
+fastboot flash dtbo surya-backup-dtbo.img
+```
 
 ## Stage 2: root filesystem on userdata
 
