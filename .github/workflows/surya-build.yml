@@ -58,7 +58,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential bc bison flex libssl-dev libelf-dev \
             cpio busybox-static mkbootimg file zstd kmod python3
-          mkbootimg --help | grep -q -- --dtb
+          # Ubuntu's mkbootimg imports gki.generate_gki_certificate but does not
+          # ship it. It is only used for GKI boot signatures (header v4), never
+          # for surya's header v2, so a stub module is enough.
+          mkdir -p "$RUNNER_TEMP/pystub/gki"
+          touch "$RUNNER_TEMP/pystub/gki/__init__.py"
+          printf 'def generate_gki_certificate(*args, **kwargs):\n    raise SystemExit("GKI signing is not used for surya")\n' \
+            > "$RUNNER_TEMP/pystub/gki/generate_gki_certificate.py"
+          echo "PYTHONPATH=$RUNNER_TEMP/pystub" >> "$GITHUB_ENV"
+          PYTHONPATH="$RUNNER_TEMP/pystub" mkbootimg --help | grep -q -- --dtb
       - name: Kernel
         run: scripts/mobile/surya/build-kernel.sh out/kernel
       - name: Debug initramfs
