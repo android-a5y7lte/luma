@@ -75,8 +75,10 @@ jobs:
         run: |
           mkdir -p dist
           for panel in huaxing tianma; do
-            scripts/mobile/surya/build-boot-image.sh out/kernel out/initramfs-debug.cpio.gz \
-              "dist/luma-surya-stage1-$panel.img" "$panel" debug
+            for packing in v0-appended v2-appended v2; do
+              PACKING=$packing scripts/mobile/surya/build-boot-image.sh out/kernel \
+                out/initramfs-debug.cpio.gz "dist/luma-surya-stage1-$panel-$packing.img" "$panel" debug
+            done
           done
           release=$(cat out/kernel/kernelrelease)
           cp out/kernel/config-* dist/

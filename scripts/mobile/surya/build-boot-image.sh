@@ -7,6 +7,11 @@
 #
 # usage: build-boot-image.sh KERNEL_OUT_DIR RAMDISK OUTPUT [huaxing|tianma] [debug]
 #   debug: stage 1 command line (console on the panel, no Luma root arguments)
+# env:   PACKING=v2 (default; header v2, DTB section, as soc.toml)
+#        PACKING=v0-appended (header v0, DTB appended to Image.gz: the layout
+#          postmarketOS' xiaomi-surya boot images use)
+#        PACKING=v2-appended (header v2 with both an appended DTB and the DTB
+#          section)
 # Needs mkbootimg (AOSP; Ubuntu package "mkbootimg") and python3 >= 3.11.
 set -euo pipefail
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
@@ -24,7 +29,7 @@ boot = tomllib.load(open(f"{root}/devices/xiaomi/surya/boot.toml", "rb"))
 o = soc["boot"]["offsets"]
 assert soc["boot"]["format"] == "android-boot-v2"
 if mode == "debug":
-    args = ["console=tty0", "loglevel=7", "fbcon=rotate:0", "rdinit=/init", "enforcing=0"]
+    args = ["console=tty0", "loglevel=7", "clk_ignore_unused", "pd_ignore_unused", "rdinit=/init", "enforcing=0"]
 else:
     args = list(boot["cmdline"]["args"])
 for k, v in {"PAGE": soc["boot"]["page_size"], "BASE": o["base"], "KOFF": o["kernel"],
@@ -34,12 +39,21 @@ for k, v in {"PAGE": soc["boot"]["page_size"], "BASE": o["base"], "KOFF": o["ker
 PY
 )"
 
-mkbootimg --header_version 2 \
-  --kernel "$kout/Image.gz" --ramdisk "$ramdisk" --dtb "$dtb" \
-  --pagesize "$PAGE" --base "$(printf '0x%08x' "$BASE")" \
-  --kernel_offset "$(printf '0x%08x' "$KOFF")" --ramdisk_offset "$(printf '0x%08x' "$ROFF")" \
-  --second_offset "$(printf '0x%08x' "$SOFF")" --tags_offset "$(printf '0x%08x' "$TOFF")" \
-  --dtb_offset "$(printf '0x%08x' "$DOFF")" \
+packing=${PACKING:-v2}
+kernel="$kout/Image.gz"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+offsets=(--pagesize "$PAGE" --base "$(printf '0x%08x' "$BASE")"
+  --kernel_offset "$(printf '0x%08x' "$KOFF")" --ramdisk_offset "$(printf '0x%08x' "$ROFF")"
+  --second_offset "$(printf '0x%08x' "$SOFF")" --tags_offset "$(printf '0x%08x' "$TOFF")")
+case "$packing" in
+  v2) header=(--header_version 2 --dtb "$dtb" --dtb_offset "$(printf '0x%08x' "$DOFF")") ;;
+  v0-appended) cat "$kernel" "$dtb" > "$work/Image.gz-dtb"; kernel="$work/Image.gz-dtb"
+     header=(--header_version 0) ;;
+  v2-appended) cat "$kernel" "$dtb" > "$work/Image.gz-dtb"; kernel="$work/Image.gz-dtb"
+     header=(--header_version 2 --dtb "$dtb" --dtb_offset "$(printf '0x%08x' "$DOFF")") ;;
+  *) echo "unknown PACKING $packing" >&2; exit 2 ;;
+esac
+mkbootimg "${header[@]}" --kernel "$kernel" --ramdisk "$ramdisk" "${offsets[@]}" \
   --cmdline "$CMDLINE" -o "$output"
 size=$(stat -c %s "$output")
 max=$(python3 -c "import tomllib;print(tomllib.load(open('$repo_root/devices/xiaomi/surya/boot.toml','rb'))['partition_size'])")
