@@ -7,6 +7,7 @@
 #
 # usage: build-boot-image.sh KERNEL_OUT_DIR RAMDISK OUTPUT [huaxing|tianma] [debug]
 #   debug: stage 1 command line (console on the panel, no Luma root arguments)
+#   nbd:   stage 2, Luma root from the computer over USB (serve-usb-root.sh)
 # env:   PACKING=v2 (default; header v2, DTB section, as soc.toml)
 #        PACKING=v0-appended (header v0, DTB appended to Image.gz: the layout
 #          postmarketOS' xiaomi-surya boot images use)
@@ -28,8 +29,13 @@ soc = tomllib.load(open(f"{root}/socs/qcom/sm7150/soc.toml", "rb"))
 boot = tomllib.load(open(f"{root}/devices/xiaomi/surya/boot.toml", "rb"))
 o = soc["boot"]["offsets"]
 assert soc["boot"]["format"] == "android-boot-v2"
+debug = ["console=tty0", "loglevel=7", "clk_ignore_unused", "pd_ignore_unused", "rdinit=/init", "enforcing=0"]
 if mode == "debug":
-    args = ["console=tty0", "loglevel=7", "clk_ignore_unused", "pd_ignore_unused", "rdinit=/init", "enforcing=0"]
+    args = debug
+elif mode == "nbd":
+    # Stage 2: Luma's root from the computer over USB (serve-usb-root.sh).
+    args = debug + ["nbd.max_part=8", "luma.nbd=172.16.42.2:10809:luma",
+                    "ostree=/ostree/root.a", "androidboot.slot_suffix=_a"]
 else:
     args = list(boot["cmdline"]["args"])
 for k, v in {"PAGE": soc["boot"]["page_size"], "BASE": o["base"], "KOFF": o["kernel"],

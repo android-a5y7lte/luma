@@ -21,6 +21,13 @@ on:
       kernel_ref:
         description: Kernel branch or tag
         default: v7.1_rc3
+      rootfs:
+        description: Build the Luma phone userdata image (stage 2)
+        type: boolean
+        default: false
+      luma_ref:
+        description: Luma ARM OSTree ref (empty = first of stable, beta, nightly)
+        default: ""
 
 permissions:
   contents: read
@@ -118,13 +125,15 @@ jobs:
         run: |
           mkdir -p dist
           for panel in huaxing tianma; do
-            for packing in v0-appended v2-appended v2; do
-              PACKING=$packing scripts/mobile/surya/build-boot-image.sh out/kernel \
-                out/initramfs-debug.cpio.gz "dist/luma-surya-stage1-$panel-$packing.img" "$panel" debug
-            done
+            # Through U-Boot (dtbo erased), header v2 is what boots.
+            scripts/mobile/surya/build-boot-image.sh out/kernel \
+              out/initramfs-debug.cpio.gz "dist/luma-surya-stage1-$panel-v2.img" "$panel" debug
+            scripts/mobile/surya/build-boot-image.sh out/kernel \
+              out/initramfs-debug.cpio.gz "dist/luma-surya-stage2-usb-root-$panel.img" "$panel" nbd
           done
           release=$(cat out/kernel/kernelrelease)
           cp out/kernel/config-* dist/
+          cp scripts/mobile/surya/serve-usb-root.sh dist/
           tar -C out/kernel/modules -I 'zstd -19 -T0' -cf "dist/modules-$release.tar.zst" .
           {
             echo "kernel release: $release"
@@ -137,4 +146,60 @@ jobs:
         with:
           name: luma-surya-stage1-${{ github.run_number }}
           path: dist/
+          retention-days: 30
+
+  rootfs:
+    # Luma's generic phone userdata image (scripts/mobile/build-phone-userdata.sh)
+    # from the public signed OSTree repository: the same image every phone
+    # installs. Stage 2 serves it to surya over USB (serve-usb-root.sh).
+    if: (github.event_name == 'workflow_dispatch' && inputs.rootfs) || contains(github.event.head_commit.message, '[rootfs]')
+    needs: device-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
+          df -h / /mnt
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ostree policycoreutils dosfstools e2fsprogs fdisk zstd python3 gnupg
+      - name: Pull the Luma ARM commit
+        env:
+          LUMA_REF: ${{ inputs.luma_ref }}
+        run: |
+          sudo mkdir -p /mnt/luma && sudo chown "$USER" /mnt/luma
+          repo=/mnt/luma/repo
+          ostree --repo=$repo init --mode=archive
+          ostree --repo=$repo remote add --gpg-import=config/os/keys/luma-os-release.asc \
+            --set=gpg-verify=true --set=gpg-verify-summary=true luma https://dl.simplyluma.com/os/repo
+          ostree --repo=$repo remote refs luma | tee /mnt/luma/refs.txt
+          ref=$LUMA_REF
+          if [ -z "$ref" ]; then
+            for channel in stable beta nightly; do
+              if grep -qx "luma:luma/1/aarch64/$channel" /mnt/luma/refs.txt; then ref=luma/1/aarch64/$channel; break; fi
+            done
+          fi
+          [ -n "$ref" ] || { echo "no public luma/1/aarch64 ref"; exit 1; }
+          echo "LUMA_REF=$ref" >> "$GITHUB_ENV"
+          ostree --repo=$repo pull --depth=0 luma "$ref"
+          ostree --repo=$repo refs --create="$ref" "luma:$ref"
+          ostree --repo=$repo show "$ref" | head -20
+          du -sh $repo
+      - name: Generic phone userdata image
+        run: |
+          mkdir -p dist
+          sudo TMPDIR=/mnt/luma scripts/mobile/build-phone-userdata.sh \
+            --repo /mnt/luma/repo --ref "$LUMA_REF" --output /mnt/luma/luma-phone-userdata.simg --size 10G
+          sudo chown "$USER" /mnt/luma/luma-phone-userdata.simg*
+          zstd -T0 -10 --rm /mnt/luma/luma-phone-userdata.simg -o dist/luma-phone-userdata.simg.zst
+          cp /mnt/luma/luma-phone-userdata.simg.manifest dist/
+          (cd dist && sha256sum * | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luma-phone-userdata-${{ github.run_number }}
+          path: dist/
+          compression-level: 0
           retention-days: 30

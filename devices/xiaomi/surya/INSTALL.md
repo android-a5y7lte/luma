@@ -78,11 +78,37 @@ To go back to Android:
 fastboot flash dtbo surya-backup-dtbo.img
 ```
 
-## Stage 2: root filesystem on userdata
+## Stage 2: Luma with its root on the computer (USB)
 
-Not ready. This stage will write the Luma ARM image to userdata, in the same
-layout as the Fairphone 6. It erases userdata and nothing else: modem,
-calibration and identity partitions are never written.
+Nothing is written to the phone: the root file system stays on the computer
+and the phone reads and writes it over the USB network (NBD). It is slower
+than a real install, but userdata, and whatever is on it, is left alone.
+
+You need, from one build: Luma's generic phone userdata image
+(`luma-phone-userdata.simg.zst`, the build's "luma-phone-userdata" artifact,
+made when the run was started with "rootfs" or the commit names `[rootfs]`),
+and from the stage 1 artifact `modules-*.tar.zst`,
+`luma-surya-stage2-usb-root-huaxing.img` and `serve-usb-root.sh`.
+
+On the computer (the first run unpacks and prepares the image, adding the
+surya modules and the phone's firmware, which it downloads itself):
+
+```sh
+sudo apt install zstd android-sdk-libsparse-utils qemu-utils git
+sudo ./serve-usb-root.sh luma-phone-userdata.simg.zst modules-*.tar.zst
+```
+
+On the phone, with `dtbo` erased as in stage 1: RAM-boot U-Boot, choose
+"Enable fastboot mode", then
+
+```sh
+fastboot boot luma-surya-stage2-usb-root-huaxing.img
+```
+
+The script sees the phone's USB network and starts serving; the phone
+connects, mounts LumaRoot and starts Luma's systemd. If it cannot, it stays in
+the stage 1 debug shell (`telnet 172.16.42.1`). Keep the cable in and the
+script running: the phone has no root without them.
 
 ## Firmware
 
