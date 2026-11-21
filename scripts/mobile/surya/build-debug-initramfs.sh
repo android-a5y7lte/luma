@@ -20,7 +20,13 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 mkdir -p "$root"/{bin,sbin,dev,proc,sys,tmp,run,mnt,etc,lib/modules}
 cp "$busybox" "$root/bin/busybox"
-for applet in $("$busybox" --list); do ln -sf busybox "$root/bin/$applet"; done
+# --list includes "busybox" itself: linking it would replace the binary with
+# a link to itself (ELOOP, error -40, on the phone).
+for applet in $("$busybox" --list); do
+  [ "$applet" = busybox ] && continue
+  ln -sf busybox "$root/bin/$applet"
+done
+[ -f "$root/bin/busybox" ] && [ ! -L "$root/bin/busybox" ] || { echo "bin/busybox is not a file" >&2; exit 1; }
 # USB and display modules, if the config built them as modules.
 release=$(cat "$kout/kernelrelease")
 if [ -d "$kout/modules/lib/modules/$release" ]; then
