@@ -6,6 +6,11 @@ partition = "boot"
 # Expected 128 MiB; confirm on the phone with
 # `fastboot getvar partition-size:boot` (0x8000000) before flashing anything.
 partition_size = 134217728
+# Xiaomi's ABL quietly refuses (back to fastboot) a boot image whose header
+# carries no OS version or patch level. These are the values the ios-surya
+# port's images boot with on this phone; Luma's FP6 profile uses 2099-12-31.
+os_version = "17.0.0"
+os_patch_level = "2035-06-01"
 
 [cmdline]
 # Fixed arguments, in order. Experimental: SELinux stays permissive during

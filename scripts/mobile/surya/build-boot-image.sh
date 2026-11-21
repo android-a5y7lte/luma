@@ -34,7 +34,8 @@ else:
     args = list(boot["cmdline"]["args"])
 for k, v in {"PAGE": soc["boot"]["page_size"], "BASE": o["base"], "KOFF": o["kernel"],
              "ROFF": o["ramdisk"], "SOFF": o["second"], "TOFF": o["tags"], "DOFF": o["dtb"],
-             "CMDLINE": " ".join(args)}.items():
+             "CMDLINE": " ".join(args),
+             "OSVER": boot["os_version"], "OSPATCH": boot["os_patch_level"][:7]}.items():
     print(f"{k}={shlex.quote(str(v))}")
 PY
 )"
@@ -54,6 +55,7 @@ case "$packing" in
   *) echo "unknown PACKING $packing" >&2; exit 2 ;;
 esac
 mkbootimg "${header[@]}" --kernel "$kernel" --ramdisk "$ramdisk" "${offsets[@]}" \
+  --os_version "$OSVER" --os_patch_level "$OSPATCH" \
   --cmdline "$CMDLINE" -o "$output"
 size=$(stat -c %s "$output")
 max=$(python3 -c "import tomllib;print(tomllib.load(open('$repo_root/devices/xiaomi/surya/boot.toml','rb'))['partition_size'])")

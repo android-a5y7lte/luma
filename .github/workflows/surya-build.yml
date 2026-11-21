@@ -76,6 +76,7 @@ jobs:
             gzip -9n -c .output/u-boot-nodtb.bin > .output/u-boot-nodtb.bin.gz
             cat .output/u-boot-nodtb.bin.gz .output/dts/upstream/src/arm64/qcom/$dev.dtb > .output/uboot-dtb
             "$RUNNER_TEMP/mkbootimg/mkbootimg" --base 0x0 --kernel_offset 0x00008000 --pagesize 4096 \
+              --os_version 17.0.0 --os_patch_level 2035-06 \
               --kernel .output/uboot-dtb -o "../dist/u-boot-surya-$panel.img"
           done
           echo "u-boot: $UBOOT_REPO @ $UBOOT_COMMIT" > ../dist/BUILD-INFO-uboot.txt
