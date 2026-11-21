@@ -44,6 +44,48 @@ jobs:
           /tmp/devices/bin/python -B tools/check-devices.py
           /tmp/devices/bin/python -B -m unittest devices/xiaomi/surya/tests/test_xiaomi_surya.py
 
+  uboot:
+    # U-Boot as a second-stage bootloader, as postmarketOS boots SM7150 phones
+    # since 2025-03: ABL loads u-boot.img (header v0, U-Boot + appended DTB),
+    # U-Boot then boots Linux (EFI, or `fastboot boot` from its own menu).
+    # Source: sm7150-mainline/u-boot, the tree postmarketOS' releases come from.
+    needs: device-checks
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      UBOOT_REPO: https://github.com/sm7150-mainline/u-boot
+      UBOOT_COMMIT: f8c04469e8284aa2f1691a30aa3b7dc59fa0b8cd
+    steps:
+      - name: Build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential bc bison flex libssl-dev libgnutls28-dev \
+            python3 python3-setuptools swig
+          # Ubuntu's mkbootimg is broken; use the C one, as sm7150-mainline/u-boot CI does.
+          git clone --depth 1 https://github.com/osm0sis/mkbootimg "$RUNNER_TEMP/mkbootimg"
+          make -C "$RUNNER_TEMP/mkbootimg" CFLAGS=-Wstringop-overflow=0 mkbootimg
+      - name: U-Boot
+        run: |
+          git init -q u-boot && cd u-boot
+          git fetch -q --depth 1 "$UBOOT_REPO" "$UBOOT_COMMIT" && git checkout -q FETCH_HEAD
+          make O=.output qcom_defconfig qcom-phone.config tauchgang.config
+          mkdir -p ../dist
+          for panel in huaxing tianma; do
+            dev=sm7150-xiaomi-surya-$panel
+            make O=.output -j"$(nproc)" CONFIG_DEFAULT_DEVICE_TREE=qcom/$dev
+            gzip -9n -c .output/u-boot-nodtb.bin > .output/u-boot-nodtb.bin.gz
+            cat .output/u-boot-nodtb.bin.gz .output/dts/upstream/src/arm64/qcom/$dev.dtb > .output/uboot-dtb
+            "$RUNNER_TEMP/mkbootimg/mkbootimg" --base 0x0 --kernel_offset 0x00008000 --pagesize 4096 \
+              --kernel .output/uboot-dtb -o "../dist/u-boot-surya-$panel.img"
+          done
+          echo "u-boot: $UBOOT_REPO @ $UBOOT_COMMIT" > ../dist/BUILD-INFO-uboot.txt
+          cd ../dist && sha256sum *.img | tee SHA256SUMS-uboot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: u-boot-surya-${{ github.run_number }}
+          path: dist/
+          retention-days: 30
+
   stage1:
     needs: device-checks
     runs-on: ubuntu-24.04-arm

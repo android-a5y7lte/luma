@@ -49,4 +49,5 @@ rm -f "$out/modules/lib/modules/$release/build" "$out/modules/lib/modules/$relea
 echo "$release" > "$out/kernelrelease"
 git -C "$src" rev-parse HEAD > "$out/source-commit"
 (cd "$out" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+echo "Image (uncompressed): $(stat -c %s "$src/arch/arm64/boot/Image") bytes; Image.gz: $(stat -c %s "$out/Image.gz") bytes"
 echo "kernel $release -> $out"
