@@ -40,6 +40,8 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t configfs configfs /sys/kernel/config
 mount -t tmpfs tmp /run
+# telnetd needs pseudo-terminals.
+mkdir -p /dev/pts && mount -t devpts -o gid=5,mode=620 devpts /dev/pts
 log() { echo "luma-surya: $*" > /dev/kmsg; echo "luma-surya: $*"; }
 log "stage 1 initramfs, kernel $(uname -r)"
 mdev -s 2>/dev/null
