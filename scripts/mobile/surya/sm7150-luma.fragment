@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Bring-up kernel options for Luma on SM7150 (POCO X3 NFC, surya), merged over
+# arch/arm64/configs/defconfig + sm7150.config from sm7150-mainline:
+#
+#   scripts/kconfig/merge_config.sh -m .config <this file>
+#   make olddefconfig
+#
+# What Luma's userspace needs that the postmarketOS sm7150 config may lack.
+# Moves to luma/config/sm7150.fragment on the sm7150 family branch of
+# SimplyLuma/linux once that branch exists (docs/kernel.md).
+CONFIG_LOCALVERSION="-luma-sm7150"
+# SELinux (permissive during bring-up; the policy is Luma's) and LSM order
+CONFIG_SECURITY=y
+CONFIG_SECURITY_NETWORK=y
+CONFIG_SECURITY_SELINUX=y
+CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+CONFIG_SECURITY_SELINUX_DEVELOP=y
+CONFIG_BPF_LSM=y
+CONFIG_LSM="landlock,lockdown,yama,integrity,selinux,bpf"
+CONFIG_AUDIT=y
+# Android apps (Waydroid-style runtime)
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_ANDROID_BINDER_DEVICES=""
+CONFIG_DMABUF_HEAPS=y
+CONFIG_DMABUF_HEAPS_SYSTEM=y
+CONFIG_PSI=y
+# OSTree deployments, containers, Flatpak
+CONFIG_OVERLAY_FS=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZSTD=y
+CONFIG_EROFS_FS=y
+CONFIG_FS_VERITY=y
+CONFIG_USER_NS=y
+CONFIG_CGROUP_BPF=y
+CONFIG_CHECKPOINT_RESTORE=y
+CONFIG_ZRAM=y
+CONFIG_ZSMALLOC=y
+# firewalld (same set as SimplyLuma/luma#442)
+CONFIG_NF_TABLES=m
+CONFIG_NF_TABLES_INET=y
+CONFIG_NFT_CT=m
+CONFIG_NFT_LOG=m
+CONFIG_NFT_LIMIT=m
+CONFIG_NFT_MASQ=m
+CONFIG_NFT_NAT=m
+CONFIG_NFT_REJECT=m
+CONFIG_NFT_COMPAT=m
+CONFIG_NFT_FIB_INET=m
+CONFIG_NF_CONNTRACK_MARK=y
+# Bring-up debug shell over USB (stage 1 initramfs)
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_CONFIGFS_ACM=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_IKCONFIG=y
+CONFIG_IKCONFIG_PROC=y
+CONFIG_MODULE_COMPRESS=y
+CONFIG_MODULE_COMPRESS_ZSTD=y
+CONFIG_MODULE_DECOMPRESS=y

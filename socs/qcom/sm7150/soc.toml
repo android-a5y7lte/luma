@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# Shared configuration for every device on the Qualcomm SM7150 family
+# (Snapdragon 730, 730G, 732G). A device on this SoC sets `soc = "qcom/sm7150"`
+# and only declares what differs.
+#
+# Mainline support comes from the sm7150-mainline community
+# (https://github.com/sm7150-mainline/linux), which postmarketOS packages as
+# linux-postmarketos-qcom-sm7150. The `sm7150` family branch in
+# SimplyLuma/linux carries those patches on the Luma base (docs/kernel.md).
+schema = 1
+vendor = "qcom"
+family = "sm7150"
+name = "Qualcomm SM7150 (Snapdragon 730/730G/732G)"
+arch = "aarch64"
+part_numbers = ["SM7150", "SM7150-AA", "SM7150-AB", "SM7150-AC"]
+
+[kernel]
+repository = "https://github.com/SimplyLuma/linux"
+branch = "sm7150"
+upstream = "https://github.com/sm7150-mainline/linux"
+dts_directory = "arch/arm64/boot/dts/qcom"
+
+[boot]
+# Qualcomm ABL defaults for this family (postmarketOS deviceinfo for
+# xiaomi-surya: page size 4096, base 0, kernel 0x8000, ramdisk 0x1000000,
+# tags 0x100). Xiaomi SM7150 phones launched with Android 10, boot header v2,
+# no A/B slots.
+format = "android-boot-v2"
+page_size = 4096
+slots = "a-only"
+dtb_in_boot_image = true
+
+[boot.offsets]
+base = 0x00000000
+kernel = 0x00008000
+ramdisk = 0x01000000
+second = 0x00000000
+tags = 0x00000100
+dtb = 0x01f00000
+
+[firmware]
+# Device firmware lives under qcom/sm7150/<vendor>/<codename> on the phone,
+# never in git (same layout as postmarketOS firmware-xiaomi-surya).
+directory = "qcom/sm7150"

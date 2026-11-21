@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+schema = 1
+vendor = "xiaomi"
+codename = "surya"
+name = "Xiaomi POCO X3 NFC"
+marketing_name = "POCO X3 NFC"
+form_factor = "phone"
+year = 2020
+soc = "qcom/sm7150"
+tier = "experimental"
+maintainers = ["@android-a5y7lte"]
+fastboot_product = "surya"
+
+[kernel]
+# Bring-up: the sm7150 family branch (sm7150-mainline rebased onto luma-7.2)
+# is not in SimplyLuma/linux yet. Until Luma creates the branch and a release
+# carries it, this tag names the build from the maintainer's fork of
+# SimplyLuma/linux (branch sm7150), made by .github/workflows/surya-build.yml.
+tag = "luma-kernel-7.2.15-luma-sm7150.1"
+release = "7.2.15-luma-sm7150.1"
+config = "luma/surya/config-7.2.15-luma-sm7150.1"
+# Huaxing panel. Phones with the Tianma panel need
+# qcom/sm7150-xiaomi-surya-tianma.dtb instead (Settings > About phone, or
+# /proc/cmdline on Android: "dsi_..._huaxing_..." or "..._tianma_...").
+dtb = "qcom/sm7150-xiaomi-surya-huaxing.dtb"
+
+[boot]
+config = "boot.toml"
+
+[firmware]
+# Names and hashes only. Inputs: sm7150-mainline/firmware-xiaomi-surya at
+# 971dfbf9dafb27a235eea04794cfcb501fa80655 (the usr/lib/firmware tree, which
+# postmarketOS ships as firmware-xiaomi-surya). Not a grant to redistribute.
+# GPU microcode (qcom/a615_gmu.bin, qcom/a630_sqe.fw) comes from Fedora's
+# linux-firmware; only the signed zap shader is device-specific.
+manifest = "firmware.manifest"
+manifest_sha256 = "2c8c1b97a7e43ef53f1198e44d1e364c71e46fc6cfef02ee491373607f8a6224"
+files = 255
+store = "/usr/lib/firmware"
+
+[install]
+guide = "INSTALL.md"
+method = "fastboot"
+# Partitions the install must never erase or write. modemst1/modemst2/fsg hold
+# the phone's own modem settings, including its IMEI; persist holds sensor and
+# Wi-Fi calibration.
+preserve = ["modemst1", "modemst2", "fsg", "fsc", "persist", "persistbak"]

@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# POCO X3 NFC (surya) bring-up build, for the maintainer's fork.
+# Stage 1: kernel + DTBs + a debug initramfs packed as boot images for
+# `fastboot boot` (RAM only; nothing is flashed). See devices/xiaomi/surya/INSTALL.md.
+name: surya build
+
+on:
+  push:
+    branches: [surya]
+    paths:
+      - devices/xiaomi/surya/**
+      - socs/qcom/sm7150/**
+      - scripts/mobile/surya/**
+      - .github/workflows/surya-build.yml
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: Kernel repository
+        default: https://github.com/sm7150-mainline/linux
+      kernel_ref:
+        description: Kernel branch or tag
+        default: v7.1_rc3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surya-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  device-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Luma device tree checks
+        run: |
+          python -m venv /tmp/devices
+          /tmp/devices/bin/pip install --quiet jsonschema==4.23.0
+          /tmp/devices/bin/python -B tools/check-devices.py
+          /tmp/devices/bin/python -B -m unittest devices/xiaomi/surya/tests/test_xiaomi_surya.py
+
+  stage1:
+    needs: device-checks
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    env:
+      KERNEL_REPO: ${{ inputs.kernel_repo || 'https://github.com/sm7150-mainline/linux' }}
+      KERNEL_REF: ${{ inputs.kernel_ref || 'v7.1_rc3' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential bc bison flex libssl-dev libelf-dev \
+            cpio busybox-static mkbootimg file zstd kmod python3
+          mkbootimg --help | grep -q -- --dtb
+      - name: Kernel
+        run: scripts/mobile/surya/build-kernel.sh out/kernel
+      - name: Debug initramfs
+        run: scripts/mobile/surya/build-debug-initramfs.sh out/kernel out/initramfs-debug.cpio.gz
+      - name: Boot images (RAM boot only)
+        run: |
+          mkdir -p dist
+          for panel in huaxing tianma; do
+            scripts/mobile/surya/build-boot-image.sh out/kernel out/initramfs-debug.cpio.gz \
+              "dist/luma-surya-stage1-$panel.img" "$panel" debug
+          done
+          release=$(cat out/kernel/kernelrelease)
+          cp out/kernel/config-* dist/
+          tar -C out/kernel/modules -I 'zstd -19 -T0' -cf "dist/modules-$release.tar.zst" .
+          {
+            echo "kernel release: $release"
+            echo "kernel source: $KERNEL_REPO @ $KERNEL_REF ($(cat out/kernel/source-commit))"
+            echo "luma commit: $GITHUB_SHA"
+          } > dist/BUILD-INFO.txt
+          (cd dist && sha256sum * > SHA256SUMS)
+          cat dist/BUILD-INFO.txt dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luma-surya-stage1-${{ github.run_number }}
+          path: dist/
+          retention-days: 30
