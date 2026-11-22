@@ -26,7 +26,7 @@ detected.
 
 Not yet: starting the modem, audio and compute DSPs, Wi-Fi, video or camera
 resets the phone, so the "safe" image keeps their modules from loading; the
-Adreno 618 has no GMU firmware (`qcom/a615_gmu.bin`), so drawing is done by
+Adreno 618 had no GMU firmware (`qcom/a630_gmu.bin`; the A618 entry of a6xx_catalog.c names it), so drawing is done by
 the CPU; Bluetooth lacks `qca/crbtfw01.tlv`; microphone/earpiece audio and
 cameras are not supported by mainline yet (postmarketOS reports the same).
 

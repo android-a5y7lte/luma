@@ -10,7 +10,7 @@
 #   - the phone's firmware, fetched here from sm7150-mainline's
 #     firmware-xiaomi-surya (the files firmware.manifest lists; they stay on
 #     this computer and are never uploaded by Luma's builds);
-#   - the Adreno 618 microcode (qcom/a630_sqe.fw, qcom/a615_gmu.bin) from this
+#   - the Adreno 618 microcode (qcom/a630_sqe.fw, qcom/a630_gmu.bin) from this
 #     computer's linux-firmware when the image lacks it;
 #   - NetworkManager told to leave usb0 alone (the root travels over it).
 # New files only: nothing the OSTree deployment already has is changed.
@@ -72,7 +72,7 @@ prepare() {
     git clone --depth 1 \
       https://github.com/sm7150-mainline/firmware-xiaomi-surya "$work/firmware-xiaomi-surya"
   cp -rn "$work/firmware-xiaomi-surya/usr/lib/firmware/." "$dep/usr/lib/firmware/"
-  for fw in qcom/a630_sqe.fw qcom/a615_gmu.bin; do
+  for fw in qcom/a630_sqe.fw qcom/a630_gmu.bin; do
     ls "$dep/usr/lib/firmware/$fw"* >/dev/null 2>&1 && continue
     if [ -f "/lib/firmware/$fw.zst" ]; then zstd -dcq "/lib/firmware/$fw.zst" > "$dep/usr/lib/firmware/$fw"
     elif [ -f "/lib/firmware/$fw.xz" ]; then xz -dc "/lib/firmware/$fw.xz" > "$dep/usr/lib/firmware/$fw"
