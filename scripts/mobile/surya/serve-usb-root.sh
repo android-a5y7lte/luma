@@ -85,6 +85,22 @@ prepare() {
   printf '# The Luma root comes over usb0 (NBD); do not touch it.\n[keyfile]\nunmanaged-devices=interface-name:usb0\n' \
     > "$dep/etc/NetworkManager/conf.d/90-luma-surya-usb-root.conf"
 
+  # Until surya has a Luma device kit: a keyboard layout (without one GNOME
+  # Shell's on-screen keyboard fails, so the lock screen cannot be typed
+  # into), GDM's settings directory, and SSH over the USB network.
+  echo "Keyboard layout, GDM settings directory, SSH on usb0..."
+  [ -s "$dep/etc/vconsole.conf" ] || printf 'KEYMAP=us\n' > "$dep/etc/vconsole.conf"
+  install -d -m 0755 "$dep/etc/X11/xorg.conf.d"
+  [ -e "$dep/etc/X11/xorg.conf.d/00-keyboard.conf" ] ||
+    printf 'Section "InputClass"\n        Identifier "system-keyboard"\n        MatchIsKeyboard "on"\n        Option "XkbLayout" "us"\nEndSection\n' \
+      > "$dep/etc/X11/xorg.conf.d/00-keyboard.conf"
+  install -d -m 0755 "$dep/etc/tmpfiles.d"
+  printf 'd /var/lib/gdm/seat0/config/dconf 0700 gdm gdm -\n' > "$dep/etc/tmpfiles.d/luma-surya-gdm.conf"
+  install -d -m 0755 "$dep/etc/systemd/system/multi-user.target.wants" "$dep/etc/firewalld/zones"
+  ln -sf /usr/lib/systemd/system/sshd.service "$dep/etc/systemd/system/multi-user.target.wants/sshd.service"
+  printf '<?xml version="1.0" encoding="utf-8"?>\n<zone target="ACCEPT">\n  <short>Trusted</short>\n  <interface name="usb0"/>\n</zone>\n' \
+    > "$dep/etc/firewalld/zones/trusted.xml"
+
   sync
   cleanup; trap - EXIT
   mv "$raw.tmp" "$raw"

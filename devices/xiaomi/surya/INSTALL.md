@@ -11,13 +11,24 @@ need a different device tree; do not boot this image on them.
 
 ## What works
 
-Stage 1 was booted on the maintainer's POCO X3 NFC (Huaxing) on 2026-11-21:
-kernel 7.1.0-rc3 from sm7150-mainline with Luma's options, started from
-U-Boot. Working: all eight CPUs, display (msm DPU, framebuffer console),
-UFS storage, USB networking (NCM gadget, 172.16.42.1). The Novatek touch
-controller is detected but has no firmware in stage 1, nor do the modem,
-audio DSP, Wi-Fi or GPU. postmarketOS reports microphone/earpiece audio and
-cameras not working on mainline; expect the same here.
+Stage 1 (2026-11-21): kernel 7.1.0-rc3 from sm7150-mainline with Luma's
+options, started from U-Boot: eight CPUs, display, UFS storage, USB
+networking.
+
+Stage 2 (2026-11-22), the Luma ARM nightly 1.0.0-nightly.20261119.2 with its
+root served from the computer over USB, booted with
+`luma-surya-stage2-usb-root-safe-huaxing.img`: Luma's systemd, OSTree
+deployment and services start, greenboot reports GREEN, GDM and GNOME Shell
+show the lock screen on the Huaxing panel, touch works (Novatek NT36672 with
+its firmware), the on-screen keyboard works once a keyboard layout is set,
+login as `luma` works, SSH over USB works, Bluetooth controller (WCN399x)
+detected.
+
+Not yet: starting the modem, audio and compute DSPs, Wi-Fi, video or camera
+resets the phone, so the "safe" image keeps their modules from loading; the
+Adreno 618 has no GMU firmware (`qcom/a615_gmu.bin`), so drawing is done by
+the CPU; Bluetooth lacks `qca/crbtfw01.tlv`; microphone/earpiece audio and
+cameras are not supported by mainline yet (postmarketOS reports the same).
 
 ## Before you start
 
