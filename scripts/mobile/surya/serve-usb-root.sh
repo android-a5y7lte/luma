@@ -93,15 +93,35 @@ prepare() {
 
 [ -f "$raw" ] || prepare
 
+# The phone's USB network comes and goes with every boot; keep the
+# computer's address on whichever enx interface it is, while qemu-nbd serves.
+keep_address() {
+  local last=
+  while :; do
+    for iface in $(ip -br link | awk '/^enx/{print $1}'); do
+      if ! ip -br addr show dev "$iface" | grep -q "$host_ip/"; then
+        command -v nmcli >/dev/null && nmcli device set "$iface" managed no 2>/dev/null || true
+        ip addr replace "$host_ip/24" dev "$iface" 2>/dev/null || true
+        ip link set "$iface" up 2>/dev/null || true
+        [ "$iface" != "$last" ] && echo "Phone on $iface ($host_ip)" && last=$iface
+      fi
+    done
+    sleep 1
+  done
+}
 echo "Waiting for the phone's USB network (boot the stage 2 image now)..."
-while :; do
-  iface=$(ip -br link | awk '/^enx/{print $1; exit}')
-  [ -n "$iface" ] && break
-  sleep 1
-done
-command -v nmcli >/dev/null && nmcli device set "$iface" managed no 2>/dev/null || true
-ip addr replace "$host_ip/24" dev "$iface"
-ip link set "$iface" up
-echo "Phone on $iface; serving $raw at $host_ip:10809 (Ctrl-C to stop; the phone loses its root)"
-exec qemu-nbd --persistent --bind="$host_ip" --port=10809 --export-name=luma \
-  --format=raw --cache=writeback --discard=unmap "$raw"
+keep_address &
+keeper=$!
+trap 'kill $keeper 2>/dev/null || true' EXIT
+until ip -br addr | grep -q "$host_ip/"; do sleep 1; done
+echo "Serving $raw at $host_ip:10809 (Ctrl-C to stop; the phone loses its root)"
+# Listen on every address but only accept the phone's network.
+qemu-nbd --persistent --bind=0.0.0.0 --port=10809 --export-name=luma \
+  --format=raw --cache=writeback --discard=unmap "$raw" &
+nbd=$!
+trap 'kill $keeper $nbd 2>/dev/null || true' EXIT
+if command -v iptables >/dev/null; then
+  iptables -C INPUT -p tcp --dport 10809 ! -s 172.16.42.0/24 -j DROP 2>/dev/null ||
+    iptables -I INPUT -p tcp --dport 10809 ! -s 172.16.42.0/24 -j DROP
+fi
+wait $nbd

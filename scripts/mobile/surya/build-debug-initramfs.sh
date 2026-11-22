@@ -102,7 +102,11 @@ if [ -n "$udc" ] && mkdir -p $g 2>/dev/null; then
   echo "POCO X3 NFC (surya) bring-up" > $g/strings/0x409/product
   echo "surya-bringup" > $g/strings/0x409/serialnumber
   echo "NCM+RNDIS" > $g/configs/c.1/strings/0x409/configuration
-  mkdir -p $g/functions/ncm.usb0 && ln -s $g/functions/ncm.usb0 $g/configs/c.1/ 2>/dev/null
+  mkdir -p $g/functions/ncm.usb0
+  # Fixed addresses, so the computer sees the same enx interface every boot.
+  echo 02:4c:55:4d:41:01 > $g/functions/ncm.usb0/dev_addr
+  echo 02:4c:55:4d:41:02 > $g/functions/ncm.usb0/host_addr
+  ln -s $g/functions/ncm.usb0 $g/configs/c.1/ 2>/dev/null
   mkdir -p $g/functions/acm.usb0 && ln -s $g/functions/acm.usb0 $g/configs/c.1/ 2>/dev/null
   echo "$udc" > $g/UDC
   log "USB gadget on $udc"
