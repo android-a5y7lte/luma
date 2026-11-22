@@ -6,7 +6,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  Name:           gnome-shell
  Version:        50.3
 -Release:        %autorelease
-+Release:        1.luma.202%{?dist}
++Release:        1.luma.203%{?dist}
  Summary:        Window management and application launching for GNOME
  
 -License:        GPL-2.0-or-later
@@ -14,7 +14,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  URL:            https://wiki.gnome.org/Projects/GnomeShell
  Source0:        https://download.gnome.org/sources/gnome-shell/%{major_version}/%{name}-%{tarball_version}.tar.xz
  
-@@ -32,6 +32,420 @@ Patch: gnome-shell-favourite-apps-firefox.patch
+@@ -32,6 +32,423 @@ Patch: gnome-shell-favourite-apps-firefox.patch
  # Some users might have a broken PAM config, so we really need this
  # downstream patch to stop trying on configuration errors.
  Patch: 0001-gdm-Work-around-failing-fingerprint-auth.patch
@@ -364,6 +364,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
 +Patch1388:      0388-notification-lip-card-keeps-the-rim-pixel.patch
 +Patch1389:      0389-app-icon-plate-fills-the-tile.patch
 +Patch1392:      0392-session-snapshots-and-restore.patch
++Patch1393:      0393-layer-shell-surfaces.patch
 +Source9000:     quick-options-page.js
 +Source9001:     quick-options-network.js
 +Source9002:     window-corners-first-commit.js
@@ -432,10 +433,12 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
 +Source9070:     notification-breaths-policy.js
 +Source9071:     icon-mask-policy.js
 +Source9072:     app-icon-plate.js
++Source9080:     layer-shell-policy.js
++Source9081:     design-tokens.json
  
  %define eds_version 3.45.1
  %define gnome_desktop_version 44.0-7
-@@ -71,6 +485,9 @@ BuildRequires:  pkgconfig(libpipewire-0.3) >= %{pipewire_version}
+@@ -71,6 +488,9 @@ BuildRequires:  pkgconfig(libpipewire-0.3) >= %{pipewire_version}
  BuildRequires:  pkgconfig(gtk4) >= %{gtk4_version}
  BuildRequires:  gettext >= 0.19.6
  BuildRequires:  python3
@@ -445,7 +448,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  
  # for rst2man
  BuildRequires:  python3-docutils
-@@ -90,6 +507,16 @@ Conflicts: %{name} < 48~rc-5
+@@ -90,6 +510,16 @@ Conflicts: %{name} < 48~rc-5
  %ifnarch s390 s390x
  Recommends:     gnome-bluetooth%{?_isa} >= %{gnome_bluetooth_version}
  %endif
@@ -462,7 +465,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  Requires:       %{name}-common = %{version}-%{release}
  Requires:       gcr%{?_isa}
  Requires:       gjs%{?_isa} >= %{gjs_version}
-@@ -189,8 +616,60 @@ BuildArch: noarch
+@@ -189,8 +619,64 @@ BuildArch: noarch
  
  %prep
  %autosetup -S git -n %{name}-%{tarball_version}
@@ -516,6 +519,10 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
 +# Keycap icons, derived from Stevia's Lucide outlines (generate-keycap-shell-icons.py).
 +tar -xf %{SOURCE9034} -C data/icons/scalable/status --exclude=LICENSE
 +tar -xOf %{SOURCE9034} LICENSE > LUCIDE-KEYCAP-LICENSE.txt
++# The layer-shell name tag's violet is the LumaUI overlay token (0393).
++printf '// Generated from design-tokens.json (overlay) when the package is built.\nexport const OVERLAY = "%%s";\n' \
++  "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["overlay"]["color"])' %{SOURCE9081})" \
++  > js/ui/lumaLayerShellTokens.js
  
  %build
 +sh data/theme/luma-notifications/verify-generated.sh
@@ -523,7 +530,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  %meson \
    -Dextensions_app=false \
  %if %{portal_helper}
-@@ -208,9 +687,42 @@ BuildArch: noarch
+@@ -208,9 +694,43 @@ BuildArch: noarch
  mkdir -p %{buildroot}%{_datadir}/gnome-shell/extensions
  mkdir -p %{buildroot}%{_datadir}/gnome-shell/search-providers
  
@@ -563,10 +570,11 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
 +gjs -m %{SOURCE9070} js/ui/lumaNotificationBeacon.js
 +gjs -m %{SOURCE9071} js/ui/iconMask.js
 +gjs -m %{SOURCE9072} js/ui/lumaAppIconPlate.js
++gjs -m %{SOURCE9080} js/ui/lumaLayerShellModel.js
  desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Extensions.desktop
  
  %if %{portal_helper}
-@@ -218,7 +730,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Porta
+@@ -218,7 +738,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Porta
  %endif
  
  %files -f %{name}.lang
@@ -575,7 +583,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  %doc NEWS README.md
  %{_bindir}/gnome-shell
  %{_bindir}/gnome-extensions
-@@ -250,6 +762,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Porta
+@@ -250,6 +770,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Porta
  %{_datadir}/desktop-directories/X-GNOME-Shell-Utilities.directory
  %{_datadir}/icons/hicolor/scalable/apps/org.gnome.Shell.Extensions.svg
  %{_datadir}/icons/hicolor/symbolic/apps/org.gnome.Shell.Extensions-symbolic.svg
@@ -587,7 +595,7 @@ diff --git a/gnome-shell.spec b/gnome-shell.spec
  %{_userunitdir}/org.gnome.Shell-disable-extensions.service
  #{_userunitdir}/org.gnome.Shell.target
  %{_userunitdir}/org.gnome.Shell@.service
-@@ -272,6 +789,12 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Porta
+@@ -272,6 +797,12 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.Shell.Porta
  %{_datadir}/glib-2.0/schemas/*.xml
  
  %changelog

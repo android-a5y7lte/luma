@@ -1,0 +1,189 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Project Luma <engineering@projectluma.org>
+Date: Sat, 21 Nov 2026 13:01:29 -0500
+Subject: [PATCH] wayland: Let another protocol give an xdg_popup its parent
+
+xdg_surface.get_popup with a null parent no longer fails. The popup
+waits for meta_wayland_xdg_popup_set_parent() (zwlr_layer_surface_v1
+.get_popup) and committing it before is an invalid_popup_parent error, as
+xdg-shell says. The parent is held weakly until setup;
+meta_wayland_xdg_popup_dismiss_parentless() sends popup_done when the
+would-be parent cannot take the popup.
+---
+ src/wayland/meta-wayland-xdg-shell.c | 99 +++++++++++++++++++++-------
+ src/wayland/meta-wayland-xdg-shell.h |  5 ++
+ 2 files changed, 82 insertions(+), 22 deletions(-)
+
+diff --git a/src/wayland/meta-wayland-xdg-shell.c b/src/wayland/meta-wayland-xdg-shell.c
+index 0d58de5..77f9e7c 100644
+--- a/src/wayland/meta-wayland-xdg-shell.c
++++ b/src/wayland/meta-wayland-xdg-shell.c
+@@ -143,6 +143,10 @@ struct _MetaWaylandXdgPopup
+ 
+   struct {
+     MetaWaylandSurface *parent_surface;
++    /* Created without a parent: one comes from another protocol
++     * (zwlr_layer_surface_v1.get_popup) before the first commit. */
++    gboolean awaiting_parent;
++    gboolean parent_is_weak;
+ 
+     MetaWaylandXdgPositioner xdg_positioner;
+ 
+@@ -631,7 +635,7 @@ xdg_popup_grab (struct wl_client   *client,
+   MetaWaylandSurface *parent_surface;
+ 
+   parent_surface = xdg_popup->setup.parent_surface;
+-  if (!parent_surface)
++  if (!parent_surface && !xdg_popup->setup.awaiting_parent)
+     {
+       wl_resource_post_error (resource,
+                               XDG_POPUP_ERROR_INVALID_GRAB,
+@@ -1317,6 +1321,12 @@ finish_popup_setup (MetaWaylandXdgPopup *xdg_popup)
+   seat = xdg_popup->setup.grab_seat;
+   serial = xdg_popup->setup.grab_serial;
+ 
++  if (xdg_popup->setup.parent_is_weak)
++    {
++      g_object_remove_weak_pointer (G_OBJECT (parent_surface),
++                                    (gpointer *) &xdg_popup->setup.parent_surface);
++      xdg_popup->setup.parent_is_weak = FALSE;
++    }
+   xdg_popup->setup.parent_surface = NULL;
+   xdg_popup->setup.grab_seat = NULL;
+   xdg_popup->dismissed_by_client = FALSE;
+@@ -1455,6 +1465,16 @@ meta_wayland_xdg_popup_commit_state (MetaWaylandSurfaceRole  *surface_role,
+ {
+   MetaWaylandXdgPopup *xdg_popup = META_WAYLAND_XDG_POPUP (surface_role);
+ 
++  if (xdg_popup->setup.awaiting_parent)
++    {
++      wl_resource_post_error (meta_wayland_xdg_surface_get_wm_base_resource (META_WAYLAND_XDG_SURFACE (xdg_popup)),
++                              XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
++                              "xdg_popup@%u was committed before it was given "
++                              "a parent",
++                              wl_resource_get_id (xdg_popup->resource));
++      return;
++    }
++
+   if (xdg_popup->setup.parent_surface)
+     {
+       meta_wayland_transaction_ensure_entry (transaction,
+@@ -1462,6 +1482,41 @@ meta_wayland_xdg_popup_commit_state (MetaWaylandSurfaceRole  *surface_role,
+     }
+ }
+ 
++/*
++ * Gives a popup created without a parent (xdg_surface.get_popup with a null
++ * parent) the parent another protocol names. Returns FALSE when the popup
++ * already has one.
++ */
++gboolean
++meta_wayland_xdg_popup_set_parent (MetaWaylandXdgPopup *xdg_popup,
++                                   MetaWaylandSurface  *parent_surface)
++{
++  if (!META_IS_WAYLAND_XDG_POPUP (xdg_popup) ||
++      !xdg_popup->setup.awaiting_parent)
++    return FALSE;
++
++  xdg_popup->setup.awaiting_parent = FALSE;
++  xdg_popup->setup.parent_surface = parent_surface;
++  xdg_popup->setup.parent_is_weak = TRUE;
++  g_object_add_weak_pointer (G_OBJECT (parent_surface),
++                             (gpointer *) &xdg_popup->setup.parent_surface);
++
++  return TRUE;
++}
++
++/* The parent another protocol would have given cannot have the popup. */
++void
++meta_wayland_xdg_popup_dismiss_parentless (MetaWaylandXdgPopup *xdg_popup)
++{
++  if (!META_IS_WAYLAND_XDG_POPUP (xdg_popup) ||
++      !xdg_popup->setup.awaiting_parent)
++    return;
++
++  xdg_popup->setup.awaiting_parent = FALSE;
++  if (xdg_popup->resource)
++    xdg_popup_send_popup_done (xdg_popup->resource);
++}
++
+ static void
+ meta_wayland_xdg_popup_apply_state (MetaWaylandSurfaceRole  *surface_role,
+                                     MetaWaylandSurfaceState *pending)
+@@ -2319,32 +2374,31 @@ xdg_surface_constructor_get_popup (struct wl_client   *client,
+   MetaWaylandXdgPopup *xdg_popup;
+   MetaWaylandXdgSurface *xdg_surface;
+ 
++  /* A null parent comes from another protocol before the first commit
++   * (zwlr_layer_surface_v1.get_popup). */
+   if (!parent_resource)
+     {
+-      wl_resource_post_error (xdg_wm_base_resource,
+-                              XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
+-                              "Parent surface is null but Mutter does not yet "
+-                              "support specifying parent surfaces via other "
+-                              "protocols");
+-      return;
++      parent_surface = NULL;
+     }
+-
+-  parent_surface = surface_from_xdg_surface_resource (parent_resource);
+-  if (!parent_surface || !META_IS_WAYLAND_XDG_SURFACE (parent_surface->role))
++  else
+     {
+-      wl_resource_post_error (xdg_wm_base_resource,
+-                              XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
+-                              "Invalid popup parent role");
+-      return;
+-    }
++      parent_surface = surface_from_xdg_surface_resource (parent_resource);
++      if (!parent_surface || !META_IS_WAYLAND_XDG_SURFACE (parent_surface->role))
++        {
++          wl_resource_post_error (xdg_wm_base_resource,
++                                  XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
++                                  "Invalid popup parent role");
++          return;
++        }
+ 
+-  parent_window = meta_wayland_surface_get_window (parent_surface);
+-  if (!parent_window)
+-    {
+-      wl_resource_post_error (xdg_wm_base_resource,
+-                              XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
+-                              "Invalid popup parent window");
+-      return;
++      parent_window = meta_wayland_surface_get_window (parent_surface);
++      if (!parent_window)
++        {
++          wl_resource_post_error (xdg_wm_base_resource,
++                                  XDG_WM_BASE_ERROR_INVALID_POPUP_PARENT,
++                                  "Invalid popup parent window");
++          return;
++        }
+     }
+ 
+   if (!meta_wayland_surface_assign_role (surface,
+@@ -2376,6 +2430,7 @@ xdg_surface_constructor_get_popup (struct wl_client   *client,
+   xdg_positioner = wl_resource_get_user_data (positioner_resource);
+   xdg_popup->setup.xdg_positioner = *xdg_positioner;
+   xdg_popup->setup.parent_surface = parent_surface;
++  xdg_popup->setup.awaiting_parent = parent_surface == NULL;
+ 
+   meta_wayland_xdg_surface_reset (xdg_surface);
+ }
+diff --git a/src/wayland/meta-wayland-xdg-shell.h b/src/wayland/meta-wayland-xdg-shell.h
+index b06bbb2..58632e8 100644
+--- a/src/wayland/meta-wayland-xdg-shell.h
++++ b/src/wayland/meta-wayland-xdg-shell.h
+@@ -47,6 +47,11 @@ G_DECLARE_FINAL_TYPE (MetaWaylandXdgPopup,
+ 
+ void meta_wayland_xdg_shell_init (MetaWaylandCompositor *compositor);
+ 
++gboolean meta_wayland_xdg_popup_set_parent (MetaWaylandXdgPopup *xdg_popup,
++                                            MetaWaylandSurface  *parent_surface);
++
++void meta_wayland_xdg_popup_dismiss_parentless (MetaWaylandXdgPopup *xdg_popup);
++
+ struct wl_resource * meta_wayland_xdg_toplevel_get_resource (MetaWaylandXdgToplevel *xdg_toplevel);
+ 
+ void meta_wayland_xdg_toplevel_set_hint_restored (MetaWaylandXdgToplevel *xdg_toplevel);

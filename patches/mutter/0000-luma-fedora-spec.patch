@@ -1,11 +1,11 @@
 --- a/mutter.spec
 +++ b/mutter.spec
-@@ -29,13 +29,57 @@
+@@ -29,13 +29,61 @@
  
  Name:          mutter
  Version:       50.4
 -Release:       %autorelease
-+Release:       1.luma.31%{?dist}
++Release:       1.luma.32%{?dist}
  Summary:       Window and compositing manager based on Clutter
  
  # Automatically converted from old format: GPLv2+ - review is highly recommended.
@@ -16,6 +16,7 @@
 +Source2:       default-monitor-scale.py
 +Source3:       luma-window-shape-v1.xml
 +Source4:       luma-window-capture-v1.xml
++Source5:       wlr-layer-shell-unstable-v1.xml
 +Patch1000:     0001-luma-handheld-scales.patch
 +Patch1001:     0002-clutter-Add-blur-node-support-for-framebuffer-region.patch
 +Patch1002:     0003-compositor-Add-background-blur-support.patch
@@ -54,12 +55,15 @@
 +Patch1035:     0036-clutter-stage-Mark-capture-paints-let-captures-be-made-to-paint.patch
 +Patch1036:     0037-clutter-Update-only-the-views-a-redraw-lands-on.patch
 +Patch1041:     0042-Let-windows-hide-from-screen-captures.patch
++Patch1042:     0043-wayland-Tell-who-a-client-is.patch
++Patch1043:     0044-wayland-Let-another-protocol-give-an-xdg_popup-its-parent.patch
++Patch1044:     0045-wayland-Implement-wlr-layer-shell.patch
 +Patch1046:     0047-constraints-A-window-that-keeps-its-shape-keeps-it-in-tiles.patch
 +Patch1047:     0048-Let-a-configure-handler-restore-a-window-in-any-state.patch
  
  
  BuildRequires: cvt
-@@ -169,6 +213,12 @@
+@@ -169,6 +217,14 @@
  
  %prep
  %autosetup -S git -n %{name}-%{tarball_version}
@@ -69,10 +73,12 @@
 +  src/wayland/protocol/luma-window-shape-v1.xml
 +install -D -m 0644 %{SOURCE4} \
 +  src/wayland/protocol/luma-window-capture-v1.xml
++install -D -m 0644 %{SOURCE5} \
++  src/wayland/protocol/wlr-layer-shell-unstable-v1.xml
  
  %build
  %meson -Degl_device=true
-@@ -179,6 +229,29 @@
+@@ -179,6 +235,29 @@
  
  %find_lang %{name}
  
@@ -102,7 +108,7 @@
  %files -f %{name}.lang
  %license COPYING
  %doc NEWS
-@@ -200,6 +273,7 @@
+@@ -200,6 +279,7 @@
  %{_datadir}/GConf/gsettings/mutter-schemas.convert
  %{_datadir}/glib-2.0/schemas/org.gnome.mutter.gschema.xml
  %{_datadir}/glib-2.0/schemas/org.gnome.mutter.wayland.gschema.xml
