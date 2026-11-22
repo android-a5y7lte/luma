@@ -37,16 +37,25 @@ done
 mkdir -p "$work"
 raw=$work/luma-surya-userdata.img
 host_ip=172.16.42.2
+mnt=$work/mnt
+loop=
+
+cleanup() {
+  mountpoint -q "$mnt" && umount "$mnt" || true
+  [ -n "$loop" ] && losetup -d "$loop" 2>/dev/null || true
+  # A run that stopped half-way may have left the unfinished copy attached.
+  for dev in $(losetup -j "$raw.tmp" -O NAME -n 2>/dev/null); do losetup -d "$dev" || true; done
+}
+cleanup
 
 prepare() {
   echo "Unpacking $(basename "$userdata") (once)..."
   zstd -dc "$userdata" > "$work/userdata.simg"
   simg2img "$work/userdata.simg" "$raw.tmp"
   rm -f "$work/userdata.simg"
-  local mnt=$work/mnt loop
   mkdir -p "$mnt"
   loop=$(losetup -b 4096 -fP --show "$raw.tmp")
-  trap 'umount "$mnt" 2>/dev/null || true; losetup -d "$loop" 2>/dev/null || true' EXIT
+  trap cleanup EXIT
   mount "${loop}p2" "$mnt"
   local link dep
   link=$(readlink "$mnt/ostree/root.a") || fail "no /ostree/root.a in the image"
@@ -60,7 +69,7 @@ prepare() {
 
   echo "Adding the surya firmware (sm7150-mainline/firmware-xiaomi-surya)..."
   [ -d "$work/firmware-xiaomi-surya/.git" ] ||
-    sudo -u "${SUDO_USER:-root}" git clone --depth 1 \
+    git clone --depth 1 \
       https://github.com/sm7150-mainline/firmware-xiaomi-surya "$work/firmware-xiaomi-surya"
   cp -rn "$work/firmware-xiaomi-surya/usr/lib/firmware/." "$dep/usr/lib/firmware/"
   for fw in qcom/a630_sqe.fw qcom/a615_gmu.bin; do
@@ -77,7 +86,7 @@ prepare() {
     > "$dep/etc/NetworkManager/conf.d/90-luma-surya-usb-root.conf"
 
   sync
-  umount "$mnt"; losetup -d "$loop"; trap - EXIT
+  cleanup; trap - EXIT
   mv "$raw.tmp" "$raw"
   echo "Prepared $raw"
 }
