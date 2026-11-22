@@ -194,7 +194,7 @@ jobs:
         run: |
           mkdir -p dist
           sudo TMPDIR=/mnt/luma scripts/mobile/build-phone-userdata.sh \
-            --repo /mnt/luma/repo --ref "$LUMA_REF" --output /mnt/luma/luma-phone-userdata.simg --size 10G
+            --repo /mnt/luma/repo --ref "$LUMA_REF" --output /mnt/luma/luma-phone-userdata.simg --size 24G
           sudo chown "$USER" /mnt/luma/luma-phone-userdata.simg*
           zstd -T0 -10 --rm /mnt/luma/luma-phone-userdata.simg -o dist/luma-phone-userdata.simg.zst
           cp /mnt/luma/luma-phone-userdata.simg.manifest dist/
