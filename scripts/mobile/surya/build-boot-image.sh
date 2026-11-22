@@ -36,6 +36,14 @@ elif mode == "nbd":
     # Stage 2: Luma's root from the computer over USB (serve-usb-root.sh).
     args = debug + ["nbd.max_part=8", "luma.nbd=172.16.42.2:10809:luma",
                     "ostree=/ostree/root.a", "androidboot.slot_suffix=_a"]
+elif mode == "nbd-safe":
+    # Stage 2 without the remote processors (modem, audio/compute DSPs,
+    # Wi-Fi, video, camera): isolates resets caused by starting them.
+    args = debug + ["nbd.max_part=8", "luma.nbd=172.16.42.2:10809:luma",
+                    "ostree=/ostree/root.a", "androidboot.slot_suffix=_a",
+                    "modprobe.blacklist=qcom_q6v5_pas,qcom_q6v5_mss,qcom_q6v5_adsp,"
+                    "qcom_sysmon,ath10k_snoc,ath10k_core,venus_core,venus_enc,venus_dec,"
+                    "qcom_camss,fastrpc,qrtr_smd,rmtfs_mem"]
 else:
     args = list(boot["cmdline"]["args"])
 for k, v in {"PAGE": soc["boot"]["page_size"], "BASE": o["base"], "KOFF": o["kernel"],

@@ -59,6 +59,14 @@ log() { echo "luma-surya: $*" > /dev/kmsg; echo "luma-surya: $*"; }
 boot_nbd() {
   host=$(echo "$1" | cut -d: -f1); port=$(echo "$1" | cut -d: -f2)
   name=$(echo "$1" | cut -d: -f3); [ -n "$name" ] || name=luma
+  # Every kernel message to the computer (UDP 6666), up to a reset.
+  nc=/sys/kernel/config/netconsole/surya
+  if mkdir -p $nc 2>/dev/null; then
+    echo usb0 > $nc/dev_name; echo 172.16.42.1 > $nc/local_ip
+    echo "$host" > $nc/remote_ip; echo 6666 > $nc/remote_port
+    echo 02:4c:55:4d:41:02 > $nc/remote_mac
+    echo 1 > $nc/enabled 2>/dev/null && dmesg -n 8 && log "kernel log to $host:6666 (netconsole)"
+  fi
   log "stage 2: waiting for the Luma root at $host:$port (export $name)"
   i=0
   until nbd-client -b 4096 -N "$name" "$host" "$port" /dev/nbd0; do

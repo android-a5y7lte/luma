@@ -57,6 +57,10 @@ CONFIG_AUTOFS_FS=y
 CONFIG_FHANDLE=y
 CONFIG_TMPFS_POSIX_ACL=y
 CONFIG_TMPFS_XATTR=y
+# Kernel log to the computer over the USB network (stage 2 bring-up)
+CONFIG_NETCONSOLE=y
+CONFIG_NETCONSOLE_DYNAMIC=y
+CONFIG_CONFIGFS_FS=y
 # Bring-up debug shell over USB (stage 1 initramfs)
 CONFIG_USB_CONFIGFS=y
 CONFIG_USB_CONFIGFS_NCM=y

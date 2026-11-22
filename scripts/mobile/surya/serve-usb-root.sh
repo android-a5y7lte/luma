@@ -114,12 +114,27 @@ keep_address &
 keeper=$!
 trap 'kill $keeper 2>/dev/null || true' EXIT
 until ip -br addr | grep -q "$host_ip/"; do sleep 1; done
+# The stage 2 image sends the phone's kernel log here (netconsole, UDP 6666).
+klog=$work/phone-kernel-$(date +%Y%m%d-%H%M%S).log
+python3 -u - "$klog" <<'PY' &
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", 6666))
+with open(sys.argv[1], "ab", buffering=0) as log:
+    while True:
+        data, peer = s.recvfrom(65535)
+        if peer[0].startswith("172.16.42."):
+            log.write(data)
+PY
+klogger=$!
+echo "Phone kernel log: $klog (tail -f it in another terminal)"
 echo "Serving $raw at $host_ip:10809 (Ctrl-C to stop; the phone loses its root)"
 # Listen on every address but only accept the phone's network.
 qemu-nbd --persistent --bind=0.0.0.0 --port=10809 --export-name=luma \
   --format=raw --cache=writeback --discard=unmap "$raw" &
 nbd=$!
-trap 'kill $keeper $nbd 2>/dev/null || true' EXIT
+trap 'kill $keeper $nbd $klogger 2>/dev/null || true' EXIT
 if command -v iptables >/dev/null; then
   iptables -C INPUT -p tcp --dport 10809 ! -s 172.16.42.0/24 -j DROP 2>/dev/null ||
     iptables -I INPUT -p tcp --dport 10809 ! -s 172.16.42.0/24 -j DROP

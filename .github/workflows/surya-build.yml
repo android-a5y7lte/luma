@@ -130,6 +130,8 @@ jobs:
               out/initramfs-debug.cpio.gz "dist/luma-surya-stage1-$panel-v2.img" "$panel" debug
             scripts/mobile/surya/build-boot-image.sh out/kernel \
               out/initramfs-debug.cpio.gz "dist/luma-surya-stage2-usb-root-$panel.img" "$panel" nbd
+            scripts/mobile/surya/build-boot-image.sh out/kernel \
+              out/initramfs-debug.cpio.gz "dist/luma-surya-stage2-usb-root-safe-$panel.img" "$panel" nbd-safe
           done
           release=$(cat out/kernel/kernelrelease)
           cp out/kernel/config-* dist/
