@@ -72,6 +72,7 @@ prepare() {
     git clone --depth 1 \
       https://github.com/sm7150-mainline/firmware-xiaomi-surya "$work/firmware-xiaomi-surya"
   cp -rn "$work/firmware-xiaomi-surya/usr/lib/firmware/." "$dep/usr/lib/firmware/"
+  # Luma's image normally has these, xz-compressed (the kernel reads .xz).
   for fw in qcom/a630_sqe.fw qcom/a630_gmu.bin; do
     ls "$dep/usr/lib/firmware/$fw"* >/dev/null 2>&1 && continue
     if [ -f "/lib/firmware/$fw.zst" ]; then zstd -dcq "/lib/firmware/$fw.zst" > "$dep/usr/lib/firmware/$fw"

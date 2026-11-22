@@ -57,6 +57,12 @@ CONFIG_AUTOFS_FS=y
 CONFIG_FHANDLE=y
 CONFIG_TMPFS_POSIX_ACL=y
 CONFIG_TMPFS_XATTR=y
+# Fedora's linux-firmware is xz-compressed (qcom/a630_sqe.fw.xz, ...): without
+# these the GPU, Bluetooth and DSP firmware in Luma's image cannot be loaded.
+CONFIG_FW_LOADER_COMPRESS=y
+CONFIG_FW_LOADER_COMPRESS_XZ=y
+CONFIG_FW_LOADER_COMPRESS_ZSTD=y
+CONFIG_XZ_DEC=y
 # Kernel log to the computer over the USB network (stage 2 bring-up)
 CONFIG_NETCONSOLE=y
 CONFIG_NETCONSOLE_DYNAMIC=y
