@@ -197,7 +197,15 @@ echo 62400000.remoteproc > /sys/bus/platform/drivers/qcom_q6v5_pas/bind
 sleep 10
 step "sound card"; modprobe -a snd_soc_tas2562 snd_soc_sm8250
 sleep 5
-step "done: $(grep -o 'POCO X3' /proc/asound/cards | head -1 || echo 'no sound card')"
+step "sound: $(grep -o 'POCO X3' /proc/asound/cards | head -1 || echo 'no sound card')"
+# Double tap to wake (kernel patch in kernel-patches/): only once the session
+# is up; switching it on early in boot sent the phone back to fastboot.
+if [ -e /sys/module/nt36xxx_spi_ts/parameters/wake_gesture ]; then
+  echo Y > /sys/module/panel_huaxing_nt36672c/parameters/stay_powered
+  echo Y > /sys/module/nt36xxx_spi_ts/parameters/wake_gesture
+  step "double tap to wake on"
+fi
+step "done"
 EOF
   chmod 0755 "$dep/etc/luma-surya/wifi-up.sh"
   cat > "$dep/etc/systemd/system/luma-surya-tqftpserv.service" <<'EOF'
@@ -227,22 +235,6 @@ OnBootSec=60
 [Install]
 WantedBy=timers.target
 EOF
-  # Double tap to wake (needs the kernel patch in kernel-patches/; a kernel
-  # without it has no such parameters and the unit is skipped).
-  cat > "$dep/etc/systemd/system/luma-surya-dt2w.service" <<'EOF'
-[Unit]
-Description=surya: double tap to wake
-ConditionPathExists=/sys/module/nt36xxx_spi_ts/parameters/wake_gesture
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'echo Y > /sys/module/panel_huaxing_nt36672c/parameters/stay_powered; echo Y > /sys/module/nt36xxx_spi_ts/parameters/wake_gesture'
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  install -d -m 0755 "$dep/etc/systemd/system/multi-user.target.wants"
-  ln -sf ../luma-surya-dt2w.service "$dep/etc/systemd/system/multi-user.target.wants/luma-surya-dt2w.service"
   install -d -m 0755 "$dep/etc/systemd/system/timers.target.wants"
   ln -sf ../luma-surya-wifi.timer "$dep/etc/systemd/system/timers.target.wants/luma-surya-wifi.timer"
 
