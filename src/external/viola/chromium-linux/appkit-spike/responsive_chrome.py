@@ -581,7 +581,21 @@ class ResponsiveChrome:
             field = self.host.get_focus()
             self.center.grow(f'address-{generation}', panel_list(rows, label='Address suggestions'))
             if isinstance(field, Gtk.Editable):
-                GLib.idle_add(lambda: (field.grab_focus(), GLib.SOURCE_REMOVE)[1])
+                GLib.idle_add(self.refocus_keeping_edit, field)
+
+    @staticmethod
+    def refocus_keeping_edit(field):
+        # Gtk selects the whole text when focus comes back from the grown
+        # panel; restore the caret, or the next typed letter replaces the
+        # address (seen with the on-screen keyboard: only the last letter
+        # stays). Same restore as the desktop suggestions popup.
+        position, bounds = field.get_position(), tuple(field.get_selection_bounds())
+        field.grab_focus()
+        if len(bounds) == 2:
+            field.select_region(*bounds)
+        else:
+            field.select_region(position, position)
+        return GLib.SOURCE_REMOVE
 
     def commit_suggestion(self, item, tab):
         self.query_generation += 1
