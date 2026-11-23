@@ -145,13 +145,13 @@ prepare() {
   # Sound profile: Fedora's alsa-ucm-conf has no POCO X3 entry; add the one
   # from sm7150-mainline/alsa-ucm-conf (BSD-3-Clause), new files only.
   local ucm=4821070589906c1d80c83210639591678c245369
-  local raw=https://raw.githubusercontent.com/sm7150-mainline/alsa-ucm-conf/$ucm/ucm2
+  local ucmurl=https://raw.githubusercontent.com/sm7150-mainline/alsa-ucm-conf/$ucm/ucm2
   install -d -m 0755 "$dep/usr/share/alsa/ucm2/conf.d/sm8250" "$dep/usr/share/alsa/ucm2/Xiaomi/surya"
   [ -e "$dep/usr/share/alsa/ucm2/Xiaomi/surya/HiFi.conf" ] ||
-    curl -fsSL -o "$dep/usr/share/alsa/ucm2/Xiaomi/surya/HiFi.conf" "$raw/Xiaomi/surya/HiFi.conf" ||
+    curl -fsSL -o "$dep/usr/share/alsa/ucm2/Xiaomi/surya/HiFi.conf" "$ucmurl/Xiaomi/surya/HiFi.conf" ||
     echo "note: could not download the POCO X3 sound profile"
   [ -e "$dep/usr/share/alsa/ucm2/conf.d/sm8250/POCO X3.conf" ] ||
-    curl -fsSL -o "$dep/usr/share/alsa/ucm2/conf.d/sm8250/POCO X3.conf" "$raw/conf.d/sm8250/POCO%20X3.conf" ||
+    curl -fsSL -o "$dep/usr/share/alsa/ucm2/conf.d/sm8250/POCO X3.conf" "$ucmurl/conf.d/sm8250/POCO%20X3.conf" ||
     echo "note: could not download the POCO X3 sound profile"
 
   install -d -m 0755 "$dep/etc/luma-surya"
