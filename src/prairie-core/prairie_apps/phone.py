@@ -852,7 +852,10 @@ class PhoneWindow(AppWindow):
         page.set_margin_end(20)
         display = named(label(dial_display(self.number) if self.number else "Type a number",
                               "dial" if self.number else "dial-prompt",
-                              muted=not self.number, valign=Gtk.Align.CENTER), "pn-number", "pn-number")
+                              muted=not self.number, valign=Gtk.Align.CENTER,
+                              # A long number must not widen the centred pad
+                              # past the screen; keep its latest digits.
+                              ellipsize=Pango.EllipsizeMode.START), "pn-number", "pn-number")
         display.set_size_request(-1, 60 if self.is_phone else 52)
         page.append(display)
         match = named(box(spacing=8, halign=Gtk.Align.CENTER), "pn-match")
