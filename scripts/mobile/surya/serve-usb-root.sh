@@ -145,8 +145,9 @@ prepare() {
   install -d -m 0755 "$dep/etc/luma-surya"
   cat > "$dep/etc/luma-surya/wifi-up.sh" <<'EOF'
 #!/bin/sh
-# surya Wi-Fi, in the order that works by hand: rmtfs, tqftpserv, then the
-# modem only (auto-starting the ADSP/CDSP resets the phone), then ath10k.
+# surya Wi-Fi and sound, in the order that works by hand: rmtfs, tqftpserv,
+# the modem, ath10k, then the audio DSP and the sound card. The CDSP stays
+# off (auto-starting the DSPs early in boot reset the phone).
 # Each step is logged and synced, so after a reset the log shows how far it got.
 log=/var/log/luma-surya-wifi.log
 step() { echo "$(date +%T) $*" >> "$log"; sync; }
@@ -161,7 +162,17 @@ step "modem"; modprobe qcom_q6v5_pas
 sleep 20
 step "ath10k"; modprobe ath10k_snoc
 sleep 20
-step "done: $(ip -br link show wld0 2>/dev/null || echo 'no wld0')"
+step "wifi: $(ip -br link show wld0 2>/dev/null || echo 'no wld0')"
+# Sound: the audio DSP alone (tested by hand without a reset), then the
+# "POCO X3" card (sm8250 machine driver) and its TAS2562/TAS2564 amps.
+# Fedora's alsa-ucm-conf already has the POCO X3 profile.
+step "adsp"
+echo qcom_q6v5_pas > /sys/bus/platform/devices/62400000.remoteproc/driver_override
+echo 62400000.remoteproc > /sys/bus/platform/drivers/qcom_q6v5_pas/bind
+sleep 10
+step "sound card"; modprobe -a snd_soc_tas2562 snd_soc_sm8250
+sleep 5
+step "done: $(grep -o 'POCO X3' /proc/asound/cards | head -1 || echo 'no sound card')"
 EOF
   chmod 0755 "$dep/etc/luma-surya/wifi-up.sh"
   cat > "$dep/etc/systemd/system/luma-surya-tqftpserv.service" <<'EOF'
@@ -174,7 +185,7 @@ Restart=on-failure
 EOF
   cat > "$dep/etc/systemd/system/luma-surya-wifi.service" <<'EOF'
 [Unit]
-Description=surya: start the modem and Wi-Fi
+Description=surya: start the modem, Wi-Fi and sound
 After=NetworkManager.service
 
 [Service]
@@ -183,7 +194,7 @@ ExecStart=/etc/luma-surya/wifi-up.sh
 EOF
   cat > "$dep/etc/systemd/system/luma-surya-wifi.timer" <<'EOF'
 [Unit]
-Description=surya: start Wi-Fi one minute after boot
+Description=surya: start Wi-Fi and sound one minute after boot
 
 [Timer]
 OnBootSec=60

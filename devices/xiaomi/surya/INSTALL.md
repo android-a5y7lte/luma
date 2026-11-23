@@ -32,7 +32,12 @@ the modem (`qcom_q6v5_pas`) and ath10k. Steps are logged in
 phone once, so keep this order. ath10k then brings up
 `wld0` (random MAC; the board has none stored where ath10k looks).
 
-Not yet: starting the audio and compute DSPs, video or camera
+Speaker works (tested 2026-11-23): the same service then starts the audio
+DSP on its own and loads the "POCO X3" sound card (`snd_soc_sm8250`) and its
+TAS2562/TAS2564 amplifiers; Fedora's alsa-ucm-conf has the profile. The
+microphone and earpiece do not work in mainline yet.
+
+Not yet: starting the compute DSP, video or camera
 resets the phone, so the "safe" image keeps their modules from loading; the
 Adreno 618 had no GMU firmware (`qcom/a630_gmu.bin`; the A618 entry of a6xx_catalog.c names it), so drawing is done by
 the CPU; Bluetooth lacks `qca/crbtfw01.tlv`; microphone/earpiece audio and
