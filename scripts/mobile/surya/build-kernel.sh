@@ -27,6 +27,16 @@ if [ ! -d "$src/.git" ]; then
   git clone --depth 1 --branch "$ref" "$repo" "$src"
 fi
 git -C "$src" log -1 --format='kernel source: %H %s'
+# Surya changes not (yet) in sm7150-mainline, applied once on top.
+for patch in "$here"/kernel-patches/*.patch; do
+  [ -e "$patch" ] || continue
+  if git -C "$src" apply --check -R "$patch" 2>/dev/null; then
+    echo "kernel patch already applied: $(basename "$patch")"
+  else
+    git -C "$src" apply "$patch"
+    echo "kernel patch applied: $(basename "$patch")"
+  fi
+done
 
 make -C "$src" -j"$jobs" defconfig sm7150.config
 "$src/scripts/kconfig/merge_config.sh" -m -O "$src" "$src/.config" "$here/sm7150-luma.fragment"

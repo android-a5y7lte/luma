@@ -1,0 +1,216 @@
+diff --git a/drivers/gpu/drm/panel/panel-huaxing-nt36672c.c b/drivers/gpu/drm/panel/panel-huaxing-nt36672c.c
+index 428ee60..ce2e200 100644
+--- a/drivers/gpu/drm/panel/panel-huaxing-nt36672c.c
++++ b/drivers/gpu/drm/panel/panel-huaxing-nt36672c.c
+@@ -24,8 +24,18 @@ struct nt36672c_huaxing {
+ 	struct drm_dsc_config dsc;
+ 	struct regulator *supply;
+ 	struct gpio_desc *reset_gpio;
++	bool kept_powered;
+ };
+ 
++/*
++ * Keep the panel powered and out of reset while it is off (display off and
++ * sleep in only), so its in-cell touch controller can stay in wakeup gesture
++ * mode for double tap to wake. Costs a little standby power.
++ */
++static bool stay_powered;
++module_param(stay_powered, bool, 0644);
++MODULE_PARM_DESC(stay_powered, "Keep the panel powered while off (double tap to wake)");
++
+ static inline
+ struct nt36672c_huaxing *to_nt36672c_huaxing(struct drm_panel *panel)
+ {
+@@ -164,10 +174,14 @@ static int nt36672c_huaxing_prepare(struct drm_panel *panel)
+ 	struct drm_dsc_picture_parameter_set pps;
+ 	int ret;
+ 
+-	ret = regulator_enable(ctx->supply);
+-	if (ret < 0) {
+-		dev_err(dev, "Failed to enable regulator: %d\n", ret);
+-		return ret;
++	if (ctx->kept_powered) {
++		ctx->kept_powered = false;
++	} else {
++		ret = regulator_enable(ctx->supply);
++		if (ret < 0) {
++			dev_err(dev, "Failed to enable regulator: %d\n", ret);
++			return ret;
++		}
+ 	}
+ 
+ 	nt36672c_huaxing_reset(ctx);
+@@ -209,6 +223,11 @@ static int nt36672c_huaxing_unprepare(struct drm_panel *panel)
+ 	if (ret < 0)
+ 		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
+ 
++	if (stay_powered) {
++		ctx->kept_powered = true;
++		return 0;
++	}
++
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+ 	regulator_disable(ctx->supply);
+ 
+diff --git a/drivers/input/touchscreen/nt36xxx.h b/drivers/input/touchscreen/nt36xxx.h
+index d953d4c..4404c83 100644
+--- a/drivers/input/touchscreen/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36xxx.h
+@@ -49,6 +49,7 @@ enum nt36xxx_chips {
+ 
+ enum nt36xxx_cmds {
+ 	NT36XXX_CMD_ENTER_SLEEP = 0x11,
++	NT36XXX_CMD_ENTER_WKUP_GESTURE = 0x13,
+ 	NT36XXX_CMD_BOOTLOADER_RESET = 0x69,
+ };
+ 
+diff --git a/drivers/input/touchscreen/nt36xxx_core.c b/drivers/input/touchscreen/nt36xxx_core.c
+index e8cb3e6..9d88757 100644
+--- a/drivers/input/touchscreen/nt36xxx_core.c
++++ b/drivers/input/touchscreen/nt36xxx_core.c
+@@ -79,6 +79,20 @@ enum {
+ 
+ static struct drm_panel_follower_funcs nt36xxx_panel_follower_funcs;
+ 
++/*
++ * Double tap to wake: with the panel off, keep the controller in its wakeup
++ * gesture mode (as Android does) instead of sleep, and report KEY_WAKEUP on
++ * a double tap. Needs the panel to stay powered while off (see the panel's
++ * stay_powered parameter); takes effect from the next screen-off.
++ */
++static bool wake_gesture;
++module_param(wake_gesture, bool, 0644);
++MODULE_PARM_DESC(wake_gesture, "Double tap to wake while the panel is off");
++
++#define NT36XXX_GESTURE_DATA_PROTOCOL	30
++#define NT36XXX_GESTURE_FUNCPAGE	1
++#define NT36XXX_GESTURE_DOUBLE_CLICK	15
++
+ struct nt36xxx_ts {
+ 	struct regmap *regmap;
+ 
+@@ -94,8 +108,11 @@ struct nt36xxx_ts {
+ #define NT36XXX_STATUS_SUSPEND			BIT(0)
+ #define NT36XXX_STATUS_DOWNLOAD_COMPLETE	BIT(1)
+ #define NT36XXX_STATUS_DOWNLOAD_RECOVER		BIT(2)
++#define NT36XXX_STATUS_GESTURE			BIT(3)
+ 	unsigned int status;
+ 
++	struct input_dev *wake_input;
++
+ 	struct touchscreen_properties prop;
+ 	struct nt36xxx_fw_info fw_info;
+ 	struct nt36xxx_abs_object abs_obj;
+@@ -436,6 +453,30 @@ static void nt36xxx_report(struct nt36xxx_ts *ts)
+ 	return;
+ }
+ 
++static void nt36xxx_report_gesture(struct nt36xxx_ts *ts)
++{
++	u8 point[POINT_DATA_LEN + 1] = { 0 };
++	u8 id;
++
++	if (regmap_raw_read(ts->regmap, ts->mmap[MMAP_EVENT_BUF_ADDR],
++			    point, sizeof(point)) < 0)
++		return;
++
++	/* Same layout as the vendor driver: id in the first slot's top bits. */
++	id = point[1] >> 3;
++	if (id == NT36XXX_GESTURE_DATA_PROTOCOL && point[2] == NT36XXX_GESTURE_FUNCPAGE)
++		id = point[3];
++	dev_dbg(ts->dev, "wake gesture %u\n", id);
++	if (id != NT36XXX_GESTURE_DOUBLE_CLICK || !ts->wake_input)
++		return;
++
++	pm_wakeup_event(ts->dev, 0);
++	input_report_key(ts->wake_input, KEY_WAKEUP, 1);
++	input_sync(ts->wake_input);
++	input_report_key(ts->wake_input, KEY_WAKEUP, 0);
++	input_sync(ts->wake_input);
++}
++
+ static irqreturn_t nt36xxx_irq_handler(int irq, void *dev_id)
+ {
+ 	struct nt36xxx_ts *ts = dev_id;
+@@ -443,6 +484,11 @@ static irqreturn_t nt36xxx_irq_handler(int irq, void *dev_id)
+ 	if (!ts->mmap)
+ 		goto exit;
+ 
++	if (ts->status & NT36XXX_STATUS_GESTURE) {
++		nt36xxx_report_gesture(ts);
++		goto exit;
++	}
++
+ 	disable_irq_nosync(ts->irq);
+ 
+ 	nt36xxx_report(ts);
+@@ -968,6 +1014,21 @@ static int nt36xxx_input_dev_config(struct nt36xxx_ts *ts, const struct input_id
+ 		return ret;
+ 	}
+ 
++	/* A separate key device for double tap to wake, seen as a keyboard. */
++	ts->wake_input = devm_input_allocate_device(dev);
++	if (ts->wake_input) {
++		ts->wake_input->name = "Novatek NT36XXX Wake Gesture";
++		ts->wake_input->phys = devm_kasprintf(dev, GFP_KERNEL, "%s/input1", dev_name(dev));
++		ts->wake_input->dev.parent = dev;
++		ts->wake_input->id = *id;
++		input_set_capability(ts->wake_input, EV_KEY, KEY_WAKEUP);
++		if (input_register_device(ts->wake_input)) {
++			dev_warn(dev, "no wake gesture input device\n");
++			ts->wake_input = NULL;
++		}
++	}
++	device_init_wakeup(dev, true);
++
+ 	/* Register the input device */
+ 	ret = input_register_device(ts->input);
+ 	if (ret) {
+@@ -1134,7 +1195,16 @@ static int __maybe_unused nt36xxx_internal_pm_suspend(struct device *dev)
+ 	cancel_delayed_work_sync(&ts->work);
+ 
+ 	if (ts->mmap[MMAP_EVENT_BUF_ADDR]) {
+-		ret = regmap_write(ts->regmap, ts->mmap[MMAP_EVENT_BUF_ADDR], NT36XXX_CMD_ENTER_SLEEP);
++		if (ts->status & NT36XXX_STATUS_GESTURE) {
++			/* Host command byte, as the vendor driver writes it. */
++			u8 cmd = NT36XXX_CMD_ENTER_WKUP_GESTURE;
++
++			ret = regmap_raw_write(ts->regmap, ts->mmap[MMAP_EVENT_BUF_ADDR] |
++					       NT36XXX_EVT_HOST_CMD, &cmd, 1);
++		} else {
++			ret = regmap_write(ts->regmap, ts->mmap[MMAP_EVENT_BUF_ADDR],
++					   NT36XXX_CMD_ENTER_SLEEP);
++		}
+ 	}
+ 
+ 	if (ret)
+@@ -1191,7 +1261,12 @@ static int panel_prepared(struct drm_panel_follower *follower)
+ {
+ 	struct nt36xxx_ts *ts = container_of(follower, struct nt36xxx_ts, panel_follower);
+ 
+-	if (ts->status & NT36XXX_STATUS_SUSPEND)
++	if (ts->status & NT36XXX_STATUS_GESTURE) {
++		/* The irq stayed enabled for the gesture; the panel reset that
++		 * just happened also reset the controller (firmware reloads). */
++		ts->status &= ~NT36XXX_STATUS_GESTURE;
++		disable_irq_wake(ts->irq);
++	} else if (ts->status & NT36XXX_STATUS_SUSPEND)
+ 		enable_irq(ts->irq);
+ 
+ 	/* supposed to clear the flag, but leave to internal_pm_resume
+@@ -1207,7 +1282,14 @@ static int panel_unpreparing(struct drm_panel_follower *follower)
+ 
+ 	ts->status |= NT36XXX_STATUS_SUSPEND;
+ 
+-	disable_irq(ts->irq);
++	if (wake_gesture && ts->wake_input &&
++	    (ts->status & NT36XXX_STATUS_DOWNLOAD_COMPLETE)) {
++		ts->status |= NT36XXX_STATUS_GESTURE;
++		enable_irq_wake(ts->irq);
++		dev_dbg(ts->dev, "screen off: wake gesture armed\n");
++	} else {
++		disable_irq(ts->irq);
++	}
+ 
+ 	return nt36xxx_internal_pm_suspend(ts->dev);
+ }
