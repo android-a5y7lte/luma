@@ -81,3 +81,6 @@ CONFIG_IKCONFIG_PROC=y
 CONFIG_MODULE_COMPRESS=y
 CONFIG_MODULE_COMPRESS_ZSTD=y
 CONFIG_MODULE_DECOMPRESS=y
+
+# Camera bring-up: bus scan for sensors without a driver (kernel-patches/0002)
+CONFIG_VIDEO_LUMA_CAMPROBE=m
