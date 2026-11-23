@@ -611,12 +611,43 @@ class ResponsiveChrome:
         state = self.host.state or {}
         rows = []
         for tab in self.tabs():
-            rows.append(PanelRow(tab.get('title') or tab.get('url') or 'New tab',
+            row = PanelRow(tab.get('title') or tab.get('url') or 'New tab',
                 subtitle=tab.get('url'), icon='globe', current=tab['id'] == state.get('activeTabId'),
-                on_activate=lambda key=tab['id']: self.activate_tab(key)))
+                on_activate=lambda key=tab['id']: self.activate_tab(key))
+            rows.append(self.closable_tab_row(row, tab['id']))
         rows.append(PanelRow('New tab', icon='plus', on_activate=self.host._new_tab))
         self.center.grow('tabs', panel_list(rows, label='Tabs'))
         self.panel = 'tabs'
+
+    def closable_tab_row(self, row, key):
+        # Each open tab ends in a close button, so tabs can be closed from the
+        # phone layout's list without switching to them first.
+        line = Gtk.Box(spacing=4)
+        line.closable_tab = True
+        row.set_hexpand(True)
+        line.append(row)
+        close = Gtk.Button.new_from_icon_name('window-close-symbolic')
+        close.add_css_class('flat')
+        close.add_css_class('circular')
+        close.set_valign(Gtk.Align.CENTER)
+        close.set_tooltip_text('Close tab')
+        close.update_property([Gtk.AccessibleProperty.LABEL], ['Close tab'])
+        close.connect('clicked', lambda _button: self.close_listed_tab(line, key))
+        line.append(close)
+        return line
+
+    def close_listed_tab(self, line, key):
+        self.host.send('tab:close', {'tabId': key})
+        column = line.get_parent()
+        if column is None:
+            return
+        column.remove(line)
+        child = column.get_first_child()
+        while child is not None:
+            if getattr(child, 'closable_tab', False):
+                return
+            child = child.get_next_sibling()
+        self.center.fold(); self.panel = None
 
     def activate_tab(self, key):
         self.center.fold(); self.panel = None
