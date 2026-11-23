@@ -154,6 +154,19 @@ prepare() {
     curl -fsSL -o "$dep/usr/share/alsa/ucm2/conf.d/sm8250/POCO X3.conf" "$ucmurl/conf.d/sm8250/POCO%20X3.conf" ||
     echo "note: could not download the POCO X3 sound profile"
 
+  # The TAS2562 speaker path is silent with the 24-bit audio PipeWire picks;
+  # 16-bit plays (tested on the phone).
+  install -d -m 0755 "$dep/etc/wireplumber/wireplumber.conf.d"
+  cat > "$dep/etc/wireplumber/wireplumber.conf.d/51-luma-surya-speaker.conf" <<'EOF'
+# surya: the TAS2562 speaker path is silent with 24-bit audio; use 16-bit.
+monitor.alsa.rules = [
+  {
+    matches = [ { node.name = "~alsa_output.*" } ]
+    actions = { update-props = { audio.format = "S16LE" } }
+  }
+]
+EOF
+
   install -d -m 0755 "$dep/etc/luma-surya"
   cat > "$dep/etc/luma-surya/wifi-up.sh" <<'EOF'
 #!/bin/sh
