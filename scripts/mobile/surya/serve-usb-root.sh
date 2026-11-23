@@ -22,7 +22,11 @@
 # usage: sudo serve-usb-root.sh USERDATA.simg.zst MODULES.tar.zst [WORKDIR]
 #   WORKDIR defaults to ~/luma-surya of the user who ran sudo.
 # Needs: zstd, simg2img (android-sdk-libsparse-utils), qemu-nbd (qemu-utils),
-# git, losetup, ip.
+# git, losetup, ip, sgdisk (gdisk), growpart (cloud-guest-utils), resize2fs.
+# The image is grown to LUMA_SURYA_SIZE (default 24G) on first preparation.
+#
+# Never stop this script, or touch the image, while the phone runs Luma from
+# it: turn the phone off first. Two systems writing one ext4 corrupts it.
 # To start over from a fresh image, delete WORKDIR/luma-surya-userdata.img.
 set -euo pipefail
 fail() { printf 'serve-usb-root: %s\n' "$*" >&2; exit 1; }
@@ -31,12 +35,13 @@ userdata=$(realpath -e "${1:?usage: sudo serve-usb-root.sh USERDATA.simg.zst MOD
 modules=$(realpath -e "${2:?usage: sudo serve-usb-root.sh USERDATA.simg.zst MODULES.tar.zst [WORKDIR]}")
 home=$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)
 work=${3:-$home/luma-surya}
-for tool in zstd simg2img qemu-nbd git losetup ip; do
-  command -v "$tool" >/dev/null || fail "missing $tool (sudo apt install zstd android-sdk-libsparse-utils qemu-utils git)"
+for tool in zstd simg2img qemu-nbd git losetup ip sgdisk growpart resize2fs; do
+  command -v "$tool" >/dev/null || fail "missing $tool (sudo apt install zstd android-sdk-libsparse-utils qemu-utils git gdisk cloud-guest-utils)"
 done
 mkdir -p "$work"
 raw=$work/luma-surya-userdata.img
 host_ip=172.16.42.2
+size=${LUMA_SURYA_SIZE:-24G}
 mnt=$work/mnt
 loop=
 
@@ -53,6 +58,19 @@ prepare() {
   zstd -dc "$userdata" > "$work/userdata.simg"
   simg2img "$work/userdata.simg" "$raw.tmp"
   rm -f "$work/userdata.simg"
+  # Room for first logins and updates: grow to $size (sparse; space is only
+  # used as Luma writes). LumaRoot is the last partition.
+  if [ "$(stat -c %s "$raw.tmp")" -lt "$(numfmt --from=iec "$size")" ]; then
+    echo "Growing the image to $size..."
+    truncate -s "$size" "$raw.tmp"
+    loop=$(losetup -b 4096 -fP --show "$raw.tmp")
+    sgdisk -e "$loop" >/dev/null
+    growpart "$loop" 2 || true
+    losetup -d "$loop"; loop=$(losetup -b 4096 -fP --show "$raw.tmp")
+    e2fsck -fy "${loop}p2" >/dev/null || true
+    resize2fs "${loop}p2"
+    losetup -d "$loop"; loop=
+  fi
   mkdir -p "$mnt"
   loop=$(losetup -b 4096 -fP --show "$raw.tmp")
   trap cleanup EXIT
