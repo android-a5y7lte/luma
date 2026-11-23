@@ -28,7 +28,8 @@
     "--talk-name=org.gnome.evolution.dataserver.Sources5",
     "--talk-name=org.gnome.evolution.dataserver.AddressBook10",
     "--metadata=X-Luma=min-host-continuity=63",
-    "--talk-name=org.projectluma.ApplicationDirectory1"
+    "--talk-name=org.projectluma.ApplicationDirectory1",
+    "--talk-name=org.sigxcpu.Feedback"
   ],
   "modules": [
     {

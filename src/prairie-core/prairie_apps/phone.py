@@ -1116,7 +1116,19 @@ class PhoneWindow(AppWindow):
         if reset:
             self.vm_position = 0
 
+    def _key_feedback(self):
+        """A key-press tap through feedbackd; silent when it is unavailable."""
+        try:
+            Gio.bus_get_sync(Gio.BusType.SESSION, None).call(
+                "org.sigxcpu.Feedback", "/org/sigxcpu/Feedback", "org.sigxcpu.Feedback",
+                "TriggerFeedback",
+                GLib.Variant("(ssa{sv}i)", ("org.projectluma.Phone", "button-pressed", {}, -1)),
+                None, Gio.DBusCallFlags.NO_AUTO_START, 1000, None, None, None)
+        except GLib.Error:
+            pass
+
     def _digit(self, value):
+        self._key_feedback()
         self.requested_address = ""
         if self.call:
             if self.fixture:
@@ -1128,10 +1140,12 @@ class PhoneWindow(AppWindow):
             self._pad()
 
     def _plus(self):
+        self._key_feedback()
         self.number += "+"
         self._pad()
 
     def _delete_digit(self):
+        self._key_feedback()
         self.number = self.number[:-1]
         self._pad()
 
