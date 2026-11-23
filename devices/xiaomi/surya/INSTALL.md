@@ -25,9 +25,11 @@ login as `luma` works, SSH over USB works, Bluetooth controller (WCN399x)
 detected.
 
 Wi-Fi works (tested 2026-11-23): the safe image keeps the DSP modules from
-auto-loading, then `luma-surya-modem.service` starts only the modem
-(`qcom_q6v5_pas`), and `luma-surya-tqftpserv.service` runs Fedora's
-`tqftpserv` so the modem can read `wlanmdsp.mbn`. ath10k then brings up
+auto-loading; one minute after boot `luma-surya-wifi.timer` starts rmtfs,
+Fedora's `tqftpserv` (the modem reads `wlanmdsp.mbn` through it), then only
+the modem (`qcom_q6v5_pas`) and ath10k. Steps are logged in
+`/var/log/luma-surya-wifi.log`. Starting the modem early in boot reset the
+phone once, so keep this order. ath10k then brings up
 `wld0` (random MAC; the board has none stored where ath10k looks).
 
 Not yet: starting the audio and compute DSPs, video or camera

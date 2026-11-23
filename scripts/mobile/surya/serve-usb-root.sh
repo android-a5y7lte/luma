@@ -143,45 +143,56 @@ prepare() {
     rm -rf "$t"
   fi
   install -d -m 0755 "$dep/etc/luma-surya"
-  cat > "$dep/etc/luma-surya/modem-up.sh" <<'EOF'
+  cat > "$dep/etc/luma-surya/wifi-up.sh" <<'EOF'
 #!/bin/sh
-# surya: start the modem (Wi-Fi firmware runs on it), not the ADSP/CDSP.
+# surya Wi-Fi, in the order that works by hand: rmtfs, tqftpserv, then the
+# modem only (auto-starting the ADSP/CDSP resets the phone), then ath10k.
+# Each step is logged and synced, so after a reset the log shows how far it got.
+log=/var/log/luma-surya-wifi.log
+step() { echo "$(date +%T) $*" >> "$log"; sync; }
+step "start (boot $(cat /proc/sys/kernel/random/boot_id))"
 for rp in 62400000.remoteproc 8300000.remoteproc; do
   echo none > /sys/bus/platform/devices/$rp/driver_override 2>/dev/null
 done
-modprobe -a qrtr qrtr_smd rmtfs_mem
-modprobe qcom_q6v5_pas
+step "modules qrtr qrtr_smd rmtfs_mem"; modprobe -a qrtr qrtr_smd rmtfs_mem
+step "rmtfs"; systemctl restart rmtfs
+step "tqftpserv"; systemctl start luma-surya-tqftpserv
+step "modem"; modprobe qcom_q6v5_pas
+sleep 20
+step "ath10k"; modprobe ath10k_snoc
+sleep 20
+step "done: $(ip -br link show wld0 2>/dev/null || echo 'no wld0')"
 EOF
-  chmod 0755 "$dep/etc/luma-surya/modem-up.sh"
-  cat > "$dep/etc/systemd/system/luma-surya-modem.service" <<'EOF'
-[Unit]
-Description=surya: start the modem only
-Before=rmtfs.service luma-surya-tqftpserv.service
-Wants=rmtfs.service luma-surya-tqftpserv.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/etc/luma-surya/modem-up.sh
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  chmod 0755 "$dep/etc/luma-surya/wifi-up.sh"
   cat > "$dep/etc/systemd/system/luma-surya-tqftpserv.service" <<'EOF'
 [Unit]
 Description=surya: TFTP over QRTR for the modem (Wi-Fi firmware)
-After=luma-surya-modem.service
 
 [Service]
 ExecStart=/usr/local/bin/tqftpserv
-ExecStartPost=/bin/sh -c 'sleep 3; modprobe -r ath10k_snoc; modprobe ath10k_snoc'
 Restart=on-failure
+EOF
+  cat > "$dep/etc/systemd/system/luma-surya-wifi.service" <<'EOF'
+[Unit]
+Description=surya: start the modem and Wi-Fi
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/luma-surya/wifi-up.sh
+EOF
+  cat > "$dep/etc/systemd/system/luma-surya-wifi.timer" <<'EOF'
+[Unit]
+Description=surya: start Wi-Fi one minute after boot
+
+[Timer]
+OnBootSec=60
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=timers.target
 EOF
-  ln -sf ../luma-surya-modem.service "$dep/etc/systemd/system/multi-user.target.wants/luma-surya-modem.service"
-  ln -sf ../luma-surya-tqftpserv.service "$dep/etc/systemd/system/multi-user.target.wants/luma-surya-tqftpserv.service"
+  install -d -m 0755 "$dep/etc/systemd/system/timers.target.wants"
+  ln -sf ../luma-surya-wifi.timer "$dep/etc/systemd/system/timers.target.wants/luma-surya-wifi.timer"
 
   sync
   cleanup; trap - EXIT
