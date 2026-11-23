@@ -16,6 +16,8 @@ protocol_sha256=e463b7863c97d7be05489b52b15cd0b3a5d8290b51340f62023b47d03b4217e3
 # file (src/luma-platform/ui/meson.build).
 shape_protocol_sha256=a91d4786df709b563614c127ded9e1fe25fa3c515bf06e72836603c46c94eebe
 capture_protocol_sha256=0f8c54615183658ea91b265196f9bec545f235c9f337060e379ac30e5351bdee
+# wlroots' wlr-layer-shell-unstable-v1 (version 5), vendored as published.
+layer_shell_protocol_sha256=87e0b9c837aecd6977f76f3c47d73088b7159871f5d979dc1840f6cadb5e2ed8
 
 for tool in cpio curl git mktemp podman rpm2cpio sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || {
@@ -64,6 +66,12 @@ printf '%s  %s\n' "$capture_protocol_sha256" "$capture_protocol" | sha256sum --c
   exit 1
 }
 
+layer_shell_protocol="$repo_root/patches/mutter/protocols/wlr-layer-shell-unstable-v1.xml"
+printf '%s  %s\n' "$layer_shell_protocol_sha256" "$layer_shell_protocol" | sha256sum --check --status || {
+  printf 'error: wlr-layer-shell-unstable-v1 protocol checksum mismatch\n' >&2
+  exit 1
+}
+
 work_dir=$(mktemp -d "$output_dir/work.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT INT TERM
 extract_dir="$work_dir/srpm"
@@ -79,6 +87,7 @@ find "$extract_dir" -maxdepth 1 -type f -exec mv -t "$rpmbuild_dir/SOURCES" {} +
 install -m 0644 "$protocol" "$rpmbuild_dir/SOURCES/ext-background-effect-v1.xml"
 install -m 0644 "$shape_protocol" "$rpmbuild_dir/SOURCES/luma-window-shape-v1.xml"
 install -m 0644 "$capture_protocol" "$rpmbuild_dir/SOURCES/luma-window-capture-v1.xml"
+install -m 0644 "$layer_shell_protocol" "$rpmbuild_dir/SOURCES/wlr-layer-shell-unstable-v1.xml"
 install -m 0644 "$repo_root/tests/mutter/default-monitor-scale.py" "$rpmbuild_dir/SOURCES/"
 for patch in "$repo_root"/patches/mutter/00[0-9][0-9]-*.patch; do
   install -m 0644 "$patch" "$rpmbuild_dir/SOURCES/"
@@ -160,6 +169,10 @@ luma_assert_spec_release "$rpmbuild_dir/SPECS/mutter.spec" \
       grep -aFq "luma_window_capture_manager_v1" \
         ./usr/lib64/libmutter-18.so.0.0.0
       grep -aFq "a window hidden from capture is on the monitor" \
+        ./usr/lib64/libmutter-18.so.0.0.0
+      grep -aFq "zwlr_layer_shell_v1" \
+        ./usr/lib64/libmutter-18.so.0.0.0
+      grep -aFq "meta_wayland_compositor_set_layer_shell_grants" \
         ./usr/lib64/libmutter-18.so.0.0.0
       if grep -aFq "Dropped %u key event" ./usr/lib64/libmutter-18.so.0.0.0; then
         echo "error: this Mutter still drops keys typed during a focus handover" >&2

@@ -1,0 +1,444 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Project Luma <engineering@projectluma.org>
+Date: Sat, 21 Nov 2026 13:01:29 -0500
+Subject: [PATCH] wayland: Tell who a client is
+
+meta_wayland_client_get_identity() looks a client up once, from what the
+kernel says about the connecting process: sandboxed (a Flatpak's
+.flatpak-info and its application ID, a Snap AppArmor label, the Luma
+capsule SELinux domain luma_application.process read with SO_PEERSEC, a
+Luma closure application's app-luma-*.scope), the Shell's own (a client
+Mutter started, or Mutter itself), or a host client, named by the
+desktop-file ID of its app-*.scope or else its executable. A process that
+cannot be inspected counts as sandboxed. The process start time comes with
+it.
+
+Mutter has no wp_security_context_v1, and capsules reach the display
+socket directly, so the peer's credentials are what can be trusted here.
+---
+ src/meson.build                           |   2 +
+ src/wayland/meta-wayland-client-sandbox.c | 336 ++++++++++++++++++++++
+ src/wayland/meta-wayland-client-sandbox.h |  58 ++++
+ 3 files changed, 396 insertions(+)
+ create mode 100644 src/wayland/meta-wayland-client-sandbox.c
+ create mode 100644 src/wayland/meta-wayland-client-sandbox.h
+
+diff --git a/src/meson.build b/src/meson.build
+index cbfd9c5..d4548d8 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -683,6 +683,8 @@ mutter_sources += [
+   'wayland/meta-wayland-window-capture.h',
+   'wayland/meta-wayland-window-shape.c',
+   'wayland/meta-wayland-window-shape.h',
++  'wayland/meta-wayland-client-sandbox.c',
++  'wayland/meta-wayland-client-sandbox.h',
+   'wayland/meta-window-wayland.c',
+   'wayland/meta-window-wayland.h',
+ ]
+diff --git a/src/wayland/meta-wayland-client-sandbox.c b/src/wayland/meta-wayland-client-sandbox.c
+new file mode 100644
+index 0000000..c112997
+--- /dev/null
++++ b/src/wayland/meta-wayland-client-sandbox.c
+@@ -0,0 +1,336 @@
++/*
++ * Copyright (C) 2026 Project Luma
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++#include "wayland/meta-wayland-client-sandbox.h"
++
++#include <errno.h>
++#include <signal.h>
++#include <string.h>
++#include <sys/socket.h>
++#include <sys/types.h>
++#include <time.h>
++#include <unistd.h>
++
++#include "core/util-private.h"
++#include "wayland/meta-wayland-client-private.h"
++
++typedef struct
++{
++  MetaWaylandClientIdentity identity;
++  struct wl_listener destroy_listener;
++} IdentityEntry;
++
++static GHashTable *identity_entries;
++
++int64_t
++meta_wayland_client_identity_now_us (void)
++{
++  struct timespec ts;
++
++  clock_gettime (CLOCK_BOOTTIME, &ts);
++  return (int64_t) ts.tv_sec * G_USEC_PER_SEC + ts.tv_nsec / 1000;
++}
++
++static char *
++read_flatpak_app_id (pid_t     pid,
++                     gboolean *found)
++{
++  g_autofree char *path = g_strdup_printf ("/proc/%d/root/.flatpak-info", pid);
++  g_autoptr (GKeyFile) key_file = g_key_file_new ();
++
++  *found = FALSE;
++
++  if (!g_key_file_load_from_file (key_file, path, G_KEY_FILE_NONE, NULL))
++    return NULL;
++
++  *found = TRUE;
++  return g_key_file_get_string (key_file, "Application", "name", NULL);
++}
++
++static char *
++read_snap_label (pid_t pid)
++{
++  g_autofree char *apparmor = g_strdup_printf ("/proc/%d/attr/apparmor/current", pid);
++  g_autofree char *legacy = g_strdup_printf ("/proc/%d/attr/current", pid);
++  const char *paths[] = { apparmor, legacy };
++  size_t i;
++
++  for (i = 0; i < G_N_ELEMENTS (paths); i++)
++    {
++      g_autofree char *contents = NULL;
++      char *end;
++
++      if (!g_file_get_contents (paths[i], &contents, NULL, NULL))
++        continue;
++
++      if (!g_str_has_prefix (contents, "snap."))
++        continue;
++
++      /* "snap.NAME.APP (enforce)" */
++      end = strchr (contents, ' ');
++      if (end)
++        *end = '\0';
++      g_strchomp (contents);
++
++      return g_steal_pointer (&contents);
++    }
++
++  return NULL;
++}
++
++static gboolean
++peer_is_luma_capsule (struct wl_client *client)
++{
++  char label[256] = { 0 };
++  socklen_t len = sizeof (label) - 1;
++  int fd = wl_client_get_fd (client);
++
++  if (getsockopt (fd, SOL_SOCKET, SO_PEERSEC, label, &len) != 0)
++    return FALSE;
++
++  label[MIN (len, sizeof (label) - 1)] = '\0';
++
++  /* user:role:type:level; the dedicated capsule domain. */
++  return strstr (label, ":luma_application.process:") != NULL;
++}
++
++/* The leaf of the unified cgroup hierarchy ("0::/.../NAME.scope"). */
++static char *
++read_cgroup_leaf (pid_t pid)
++{
++  g_autofree char *path = g_strdup_printf ("/proc/%d/cgroup", pid);
++  g_autofree char *contents = NULL;
++  g_auto (GStrv) lines = NULL;
++  int i;
++
++  if (!g_file_get_contents (path, &contents, NULL, NULL))
++    return NULL;
++
++  lines = g_strsplit (contents, "\n", -1);
++  for (i = 0; lines[i]; i++)
++    {
++      const char *slash;
++
++      if (!g_str_has_prefix (lines[i], "0::"))
++        continue;
++
++      slash = strrchr (lines[i], '/');
++      return g_strdup (slash ? slash + 1 : lines[i] + 3);
++    }
++
++  return NULL;
++}
++
++/* app-LAUNCHER-ID-SUFFIX.scope (the XDG desktop's systemd convention): the
++ * desktop-file ID, which may itself contain dashes. */
++static char *
++app_id_from_scope (const char *leaf)
++{
++  g_autofree char *name = NULL;
++  char *launcher_end;
++  char *suffix;
++
++  if (!leaf || !g_str_has_prefix (leaf, "app-") ||
++      !g_str_has_suffix (leaf, ".scope"))
++    return NULL;
++
++  name = g_strndup (leaf + 4, strlen (leaf) - 4 - strlen (".scope"));
++  launcher_end = strchr (name, '-');
++  suffix = strrchr (name, '-');
++  if (!launcher_end || !suffix || suffix <= launcher_end)
++    return NULL;
++
++  *suffix = '\0';
++  if (launcher_end[1] == '\0')
++    return NULL;
++
++  /* systemd escapes '-' in unit names. */
++  {
++    g_auto (GStrv) parts = g_strsplit (launcher_end + 1, "\\x2d", -1);
++
++    return g_strjoinv ("-", parts);
++  }
++}
++
++static char *
++read_executable_name (pid_t pid)
++{
++  g_autofree char *path = g_strdup_printf ("/proc/%d/exe", pid);
++  g_autofree char *target = g_file_read_link (path, NULL);
++
++  if (!target)
++    return NULL;
++
++  return g_path_get_basename (target);
++}
++
++static int64_t
++read_start_time_us (pid_t pid)
++{
++  g_autofree char *path = g_strdup_printf ("/proc/%d/stat", pid);
++  g_autofree char *contents = NULL;
++  g_auto (GStrv) fields = NULL;
++  const char *after_comm;
++  long ticks_per_second = sysconf (_SC_CLK_TCK);
++
++  if (!g_file_get_contents (path, &contents, NULL, NULL) ||
++      ticks_per_second <= 0)
++    return 0;
++
++  /* The command name may hold spaces and parentheses: fields start after
++   * the last ')'. starttime is field 22, the 20th after it. */
++  after_comm = strrchr (contents, ')');
++  if (!after_comm)
++    return 0;
++
++  fields = g_strsplit (after_comm + 2, " ", -1);
++  if (g_strv_length (fields) < 20)
++    return 0;
++
++  return g_ascii_strtoll (fields[19], NULL, 10) * G_USEC_PER_SEC /
++         ticks_per_second;
++}
++
++static void
++classify (struct wl_client          *client,
++          MetaWaylandClientIdentity *identity)
++{
++  g_autofree char *leaf = NULL;
++  MetaWaylandClient *wayland_client;
++  pid_t pid = 0;
++  uid_t uid;
++  gid_t gid;
++  gboolean is_flatpak;
++  char *id;
++
++  wl_client_get_credentials (client, &pid, &uid, &gid);
++
++  wayland_client = meta_get_wayland_client (client);
++  if ((wayland_client &&
++       meta_wayland_client_get_kind (wayland_client) != META_WAYLAND_CLIENT_KIND_PUBLIC) ||
++      (pid > 0 && pid == getpid ()))
++    {
++      identity->is_shell = TRUE;
++      return;
++    }
++
++  if (pid <= 0)
++    {
++      identity->sandboxed = TRUE;
++      return;
++    }
++
++  identity->start_time_us = read_start_time_us (pid);
++
++  id = read_flatpak_app_id (pid, &is_flatpak);
++  if (is_flatpak)
++    {
++      identity->sandboxed = TRUE;
++      identity->engine = "flatpak";
++      identity->app_id = id;
++      return;
++    }
++
++  id = read_snap_label (pid);
++  if (id)
++    {
++      identity->sandboxed = TRUE;
++      identity->engine = "snap";
++      identity->app_id = id;
++      return;
++    }
++
++  if (peer_is_luma_capsule (client))
++    {
++      identity->sandboxed = TRUE;
++      identity->engine = "luma-capsule";
++      return;
++    }
++
++  leaf = read_cgroup_leaf (pid);
++  if (leaf && g_str_has_prefix (leaf, "app-luma-"))
++    {
++      identity->sandboxed = TRUE;
++      identity->engine = "luma";
++      return;
++    }
++
++  /* The process is gone already: nothing says it is not sandboxed. */
++  if (kill (pid, 0) != 0 && errno == ESRCH)
++    {
++      identity->sandboxed = TRUE;
++      return;
++    }
++
++  identity->app_id = app_id_from_scope (leaf);
++  if (!identity->app_id)
++    identity->app_id = read_executable_name (pid);
++}
++
++static void
++on_client_destroyed (struct wl_listener *listener,
++                     void               *data)
++{
++  IdentityEntry *entry = wl_container_of (listener, entry, destroy_listener);
++
++  wl_list_remove (&entry->destroy_listener.link);
++  g_hash_table_remove (identity_entries, data);
++}
++
++static void
++identity_entry_free (IdentityEntry *entry)
++{
++  g_free (entry->identity.app_id);
++  g_free (entry);
++}
++
++const MetaWaylandClientIdentity *
++meta_wayland_client_get_identity (const struct wl_client *const_client)
++{
++  struct wl_client *client = (struct wl_client *) const_client;
++  IdentityEntry *entry;
++
++  if (!identity_entries)
++    {
++      identity_entries =
++        g_hash_table_new_full (NULL, NULL, NULL,
++                               (GDestroyNotify) identity_entry_free);
++    }
++
++  entry = g_hash_table_lookup (identity_entries, client);
++  if (entry)
++    return &entry->identity;
++
++  entry = g_new0 (IdentityEntry, 1);
++  classify (client, &entry->identity);
++
++  entry->destroy_listener.notify = on_client_destroyed;
++  wl_client_add_destroy_listener (client, &entry->destroy_listener);
++  g_hash_table_insert (identity_entries, client, entry);
++
++  meta_topic (META_DEBUG_WAYLAND,
++              "Client %p is %s (engine %s, app %s)",
++              client,
++              entry->identity.is_shell ? "the shell's" :
++              entry->identity.sandboxed ? "sandboxed" : "a host client",
++              entry->identity.engine ? entry->identity.engine : "none",
++              entry->identity.app_id ? entry->identity.app_id : "none");
++
++  return &entry->identity;
++}
+diff --git a/src/wayland/meta-wayland-client-sandbox.h b/src/wayland/meta-wayland-client-sandbox.h
+new file mode 100644
+index 0000000..b4a0b7c
+--- /dev/null
++++ b/src/wayland/meta-wayland-client-sandbox.h
+@@ -0,0 +1,58 @@
++/*
++ * Copyright (C) 2026 Project Luma
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <glib.h>
++#include <wayland-server-core.h>
++
++/*
++ * Who a Wayland client is, looked up once per client from what the kernel
++ * says about the connecting process.
++ *
++ * Sandboxed:
++ * - Flatpak: /proc/PID/root/.flatpak-info, [Application] name;
++ * - Snap: an AppArmor label "snap.NAME.APP";
++ * - Luma capsules: the SELinux domain luma_application.process of the peer
++ *   (SO_PEERSEC);
++ * - Luma closure applications: a systemd scope app-luma-*.scope.
++ * A client whose process cannot be inspected counts as sandboxed. Capsules
++ * and closure applications have no application ID yet: their identity is
++ * the SELinux category pair and scope the application model allocates
++ * (ADR-052, Permissions 8), which that work will map to an application.
++ *
++ * The Shell's own: clients Mutter started (MetaWaylandClient) and the
++ * compositor process itself.
++ *
++ * Everything else is a host client. Its application ID is the desktop-file
++ * ID of its systemd scope (app-LAUNCHER-ID-*.scope) or, started from a
++ * terminal, its executable's name. A host client can do what the person can,
++ * so this ID names it for permissions; it is not a security boundary.
++ */
++typedef struct _MetaWaylandClientIdentity
++{
++  gboolean sandboxed;
++  gboolean is_shell;
++  const char *engine;   /* "flatpak", "snap", "luma-capsule", "luma" or NULL */
++  char *app_id;         /* NULL when nothing says */
++  int64_t start_time_us; /* process start, CLOCK_BOOTTIME; 0 if unknown */
++} MetaWaylandClientIdentity;
++
++const MetaWaylandClientIdentity * meta_wayland_client_get_identity (const struct wl_client *client);
++
++/* CLOCK_BOOTTIME, in microseconds, comparable with start_time_us. */
++int64_t meta_wayland_client_identity_now_us (void);
