@@ -858,6 +858,7 @@ class PhoneWindow(AppWindow):
                               ellipsize=Pango.EllipsizeMode.START), "pn-number", "pn-number")
         display.set_size_request(-1, 60 if self.is_phone else 52)
         page.append(display)
+        self._pad_display = display
         match = named(box(spacing=8, halign=Gtk.Align.CENTER), "pn-match")
         match.set_size_request(-1, 26)
         person = matching_person(self.source.people, self.number) if self.source else None
@@ -888,6 +889,12 @@ class PhoneWindow(AppWindow):
         delete.set_halign(Gtk.Align.CENTER)
         delete.set_valign(Gtk.Align.CENTER)
         delete.set_opacity(1 if self.number else 0)
+        # Holding delete keeps deleting; the pad is rebuilt once it is let go.
+        hold = Gtk.GestureLongPress()
+        hold.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        hold.connect("pressed", self._delete_hold_start)
+        hold.connect("end", self._delete_hold_end)
+        delete.add_controller(hold)
         slot = Gtk.CenterBox()
         slot.set_size_request(76, 76)
         slot.set_center_widget(delete)
@@ -1143,6 +1150,35 @@ class PhoneWindow(AppWindow):
         self._key_feedback()
         self.number += "+"
         self._pad()
+
+    def _delete_hold_start(self, gesture, *_args):
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self._delete_hold_stop()
+        self._delete_holding = True
+        def step():
+            if not self.number:
+                self._delete_hold_timer = None
+                return GLib.SOURCE_REMOVE
+            self._key_feedback()
+            self.number = self.number[:-1]
+            display = getattr(self, "_pad_display", None)
+            if display is not None:
+                display.set_label(dial_display(self.number) if self.number else "")
+            return GLib.SOURCE_CONTINUE
+        step()
+        self._delete_hold_timer = GLib.timeout_add(90, step)
+
+    def _delete_hold_stop(self):
+        timer = getattr(self, "_delete_hold_timer", None)
+        if timer:
+            GLib.source_remove(timer)
+        self._delete_hold_timer = None
+
+    def _delete_hold_end(self, *_args):
+        self._delete_hold_stop()
+        if getattr(self, "_delete_holding", False):
+            self._delete_holding = False
+            self._pad()
 
     def _delete_digit(self):
         self._key_feedback()
