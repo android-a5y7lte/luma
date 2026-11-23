@@ -142,6 +142,18 @@ prepare() {
     fi
     rm -rf "$t"
   fi
+  # Sound profile: Fedora's alsa-ucm-conf has no POCO X3 entry; add the one
+  # from sm7150-mainline/alsa-ucm-conf (BSD-3-Clause), new files only.
+  local ucm=4821070589906c1d80c83210639591678c245369
+  local raw=https://raw.githubusercontent.com/sm7150-mainline/alsa-ucm-conf/$ucm/ucm2
+  install -d -m 0755 "$dep/usr/share/alsa/ucm2/conf.d/sm8250" "$dep/usr/share/alsa/ucm2/Xiaomi/surya"
+  [ -e "$dep/usr/share/alsa/ucm2/Xiaomi/surya/HiFi.conf" ] ||
+    curl -fsSL -o "$dep/usr/share/alsa/ucm2/Xiaomi/surya/HiFi.conf" "$raw/Xiaomi/surya/HiFi.conf" ||
+    echo "note: could not download the POCO X3 sound profile"
+  [ -e "$dep/usr/share/alsa/ucm2/conf.d/sm8250/POCO X3.conf" ] ||
+    curl -fsSL -o "$dep/usr/share/alsa/ucm2/conf.d/sm8250/POCO X3.conf" "$raw/conf.d/sm8250/POCO%20X3.conf" ||
+    echo "note: could not download the POCO X3 sound profile"
+
   install -d -m 0755 "$dep/etc/luma-surya"
   cat > "$dep/etc/luma-surya/wifi-up.sh" <<'EOF'
 #!/bin/sh
@@ -165,7 +177,7 @@ sleep 20
 step "wifi: $(ip -br link show wld0 2>/dev/null || echo 'no wld0')"
 # Sound: the audio DSP alone (tested by hand without a reset), then the
 # "POCO X3" card (sm8250 machine driver) and its TAS2562/TAS2564 amps.
-# Fedora's alsa-ucm-conf already has the POCO X3 profile.
+# The POCO X3 sound profile (UCM) is added above.
 step "adsp"
 echo qcom_q6v5_pas > /sys/bus/platform/devices/62400000.remoteproc/driver_override
 echo 62400000.remoteproc > /sys/bus/platform/drivers/qcom_q6v5_pas/bind

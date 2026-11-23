@@ -34,7 +34,8 @@ phone once, so keep this order. ath10k then brings up
 
 Speaker works (tested 2026-11-23): the same service then starts the audio
 DSP on its own and loads the "POCO X3" sound card (`snd_soc_sm8250`) and its
-TAS2562/TAS2564 amplifiers; Fedora's alsa-ucm-conf has the profile. The
+TAS2562/TAS2564 amplifiers. Fedora's alsa-ucm-conf has no POCO X3 profile,
+so serve-usb-root.sh adds sm7150-mainline's (`Xiaomi/surya/HiFi.conf`). The
 microphone and earpiece do not work in mainline yet.
 
 Not yet: starting the compute DSP, video or camera
