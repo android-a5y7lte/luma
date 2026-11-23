@@ -2230,6 +2230,9 @@ button.lumaui-dial-key {
   color: @luma_ink; box-shadow: inset 0 var(--lumaui-dial-key-chip-lip) 0 @luma_chip_highlight, 0 0 0 var(--lumaui-dial-key-chip-ring) @luma_chip_ring, 0 var(--lumaui-dial-key-chip-shadow-y) var(--lumaui-dial-key-chip-shadow-blur) @luma_chip_shadow;
 }
 button.lumaui-dial-key:hover { background: @luma_control_fill; }
+/* A touch has no hover; show the press itself so each digit is seen to land. */
+button.lumaui-dial-key.key:active, button.lumaui-dial-key.tone:active { background: @luma_accent; color: #ffffff; }
+button.lumaui-dial-key.key:active label.dial-legend { color: alpha(#ffffff, 0.8); }
 button.lumaui-dial-key:disabled { opacity: var(--lumaui-dial-key-disabled-alpha-ratio); filter: none; }
 button.lumaui-dial-key label.dial-digit {
   font-size: var(--lumaui-dial-key-digit-size); font-weight: var(--lumaui-dial-key-digit-weight); line-height: 1;
