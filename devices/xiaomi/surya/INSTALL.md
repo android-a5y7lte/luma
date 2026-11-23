@@ -37,7 +37,13 @@ DSP on its own and loads the "POCO X3" sound card (`snd_soc_sm8250`) and its
 TAS2562/TAS2564 amplifiers. Fedora's alsa-ucm-conf has no POCO X3 profile,
 so serve-usb-root.sh adds sm7150-mainline's (`Xiaomi/surya/HiFi.conf`).
 The speaker is silent with 24-bit audio, so a WirePlumber rule makes PipeWire
-use 16-bit (`S16LE`). The
+use 16-bit (`S16LE`).
+
+Double tap to wake works (tested 2026-11-23) with the kernel patch in
+`scripts/mobile/surya/kernel-patches/`: `luma-surya-dt2w.service` sets
+`nt36xxx_spi_ts.wake_gesture` and `panel_huaxing_nt36672c.stay_powered`, so
+screen-off keeps the panel powered and the touch controller in gesture mode.
+Write N to both to turn it off (a little less standby power). The
 microphone and earpiece do not work in mainline yet.
 
 Not yet: starting the compute DSP, video or camera
