@@ -35,8 +35,8 @@ userdata=$(realpath -e "${1:?usage: sudo serve-usb-root.sh USERDATA.simg.zst MOD
 modules=$(realpath -e "${2:?usage: sudo serve-usb-root.sh USERDATA.simg.zst MODULES.tar.zst [WORKDIR]}")
 home=$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)
 work=${3:-$home/luma-surya}
-for tool in zstd simg2img qemu-nbd git losetup ip sgdisk growpart resize2fs; do
-  command -v "$tool" >/dev/null || fail "missing $tool (sudo apt install zstd android-sdk-libsparse-utils qemu-utils git gdisk cloud-guest-utils)"
+for tool in zstd simg2img qemu-nbd git losetup ip sgdisk growpart resize2fs curl rpm2cpio cpio; do
+  command -v "$tool" >/dev/null || fail "missing $tool (sudo apt install zstd android-sdk-libsparse-utils qemu-utils git gdisk cloud-guest-utils curl rpm2cpio cpio)"
 done
 mkdir -p "$work"
 raw=$work/luma-surya-userdata.img
@@ -119,6 +119,69 @@ prepare() {
   ln -sf /usr/lib/systemd/system/sshd.service "$dep/etc/systemd/system/multi-user.target.wants/sshd.service"
   printf '<?xml version="1.0" encoding="utf-8"?>\n<zone target="ACCEPT">\n  <short>Trusted</short>\n  <interface name="usb0"/>\n</zone>\n' \
     > "$dep/etc/firewalld/zones/trusted.xml"
+
+  # Wi-Fi: the WCN3990 firmware runs on the modem, which reads wlanmdsp.mbn
+  # through tqftpserv (Fedora package, not in Luma's image yet). Start only
+  # the modem: auto-starting the ADSP/CDSP resets the phone. tqftpserv goes
+  # in /usr/local (/var/usrlocal) so Luma's /usr stays untouched.
+  echo "Wi-Fi: tqftpserv and modem-only start at boot..."
+  local usrlocal=$mnt/ostree/deploy/luma/var/usrlocal
+  if [ ! -x "$usrlocal/bin/tqftpserv" ]; then
+    local t u f
+    t=$(mktemp -d)
+    for u in https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/t/ \
+             https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/aarch64/os/Packages/t/; do
+      f=$(curl -fs "$u" | grep -o 'tqftpserv-[0-9][^"]*\.aarch64\.rpm' | sort -V | tail -1)
+      [ -n "$f" ] && curl -fsSL -o "$t/$f" "$u$f" && break
+    done
+    if ls "$t"/tqftpserv-*.rpm >/dev/null 2>&1; then
+      (cd "$t" && rpm2cpio tqftpserv-*.rpm | cpio -idm --quiet ./usr/bin/tqftpserv)
+      install -D -m 0755 "$t/usr/bin/tqftpserv" "$usrlocal/bin/tqftpserv"
+    else
+      echo "note: could not download tqftpserv; Wi-Fi will not start"
+    fi
+    rm -rf "$t"
+  fi
+  install -d -m 0755 "$dep/etc/luma-surya"
+  cat > "$dep/etc/luma-surya/modem-up.sh" <<'EOF'
+#!/bin/sh
+# surya: start the modem (Wi-Fi firmware runs on it), not the ADSP/CDSP.
+for rp in 62400000.remoteproc 8300000.remoteproc; do
+  echo none > /sys/bus/platform/devices/$rp/driver_override 2>/dev/null
+done
+modprobe -a qrtr qrtr_smd rmtfs_mem
+modprobe qcom_q6v5_pas
+EOF
+  chmod 0755 "$dep/etc/luma-surya/modem-up.sh"
+  cat > "$dep/etc/systemd/system/luma-surya-modem.service" <<'EOF'
+[Unit]
+Description=surya: start the modem only
+Before=rmtfs.service luma-surya-tqftpserv.service
+Wants=rmtfs.service luma-surya-tqftpserv.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/luma-surya/modem-up.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  cat > "$dep/etc/systemd/system/luma-surya-tqftpserv.service" <<'EOF'
+[Unit]
+Description=surya: TFTP over QRTR for the modem (Wi-Fi firmware)
+After=luma-surya-modem.service
+
+[Service]
+ExecStart=/usr/local/bin/tqftpserv
+ExecStartPost=/bin/sh -c 'sleep 3; modprobe -r ath10k_snoc; modprobe ath10k_snoc'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  ln -sf ../luma-surya-modem.service "$dep/etc/systemd/system/multi-user.target.wants/luma-surya-modem.service"
+  ln -sf ../luma-surya-tqftpserv.service "$dep/etc/systemd/system/multi-user.target.wants/luma-surya-tqftpserv.service"
 
   sync
   cleanup; trap - EXIT

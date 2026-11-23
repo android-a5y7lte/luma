@@ -24,7 +24,13 @@ its firmware), the on-screen keyboard works once a keyboard layout is set,
 login as `luma` works, SSH over USB works, Bluetooth controller (WCN399x)
 detected.
 
-Not yet: starting the modem, audio and compute DSPs, Wi-Fi, video or camera
+Wi-Fi works (tested 2026-11-23): the safe image keeps the DSP modules from
+auto-loading, then `luma-surya-modem.service` starts only the modem
+(`qcom_q6v5_pas`), and `luma-surya-tqftpserv.service` runs Fedora's
+`tqftpserv` so the modem can read `wlanmdsp.mbn`. ath10k then brings up
+`wld0` (random MAC; the board has none stored where ath10k looks).
+
+Not yet: starting the audio and compute DSPs, video or camera
 resets the phone, so the "safe" image keeps their modules from loading; the
 Adreno 618 had no GMU firmware (`qcom/a630_gmu.bin`; the A618 entry of a6xx_catalog.c names it), so drawing is done by
 the CPU; Bluetooth lacks `qca/crbtfw01.tlv`; microphone/earpiece audio and
