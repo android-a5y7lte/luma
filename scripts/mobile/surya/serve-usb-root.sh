@@ -201,7 +201,13 @@ step "adsp"
 echo qcom_q6v5_pas > /sys/bus/platform/devices/62400000.remoteproc/driver_override
 echo 62400000.remoteproc > /sys/bus/platform/drivers/qcom_q6v5_pas/bind
 sleep 10
-step "sound card"; modprobe -a snd_soc_tas2562 snd_soc_sm8250
+# Kernels whose card also has the WCD9375 codec (RedLicorice/linux-surya)
+# need its SoundWire and LPASS macro modules too; missing ones are skipped.
+step "sound card"
+for m in soundwire_qcom snd_soc_lpass_rx_macro snd_soc_lpass_va_macro \
+         snd_soc_wcd937x_sdw snd_soc_wcd937x snd_soc_tas2562 snd_soc_sm8250; do
+  modprobe "$m" 2>/dev/null
+done
 sleep 5
 step "sound: $(grep -o 'POCO X3' /proc/asound/cards | head -1 || echo 'no sound card')"
 # Double tap to wake (kernel patch in kernel-patches/): only once the session
