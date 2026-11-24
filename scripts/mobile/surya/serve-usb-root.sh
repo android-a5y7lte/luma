@@ -293,7 +293,9 @@ klogger=$!
 echo "Phone kernel log: $klog (tail -f it in another terminal)"
 echo "Serving $raw at $host_ip:10809 (Ctrl-C to stop; the phone loses its root)"
 # Listen on every address but only accept the phone's network.
-qemu-nbd --persistent --bind=0.0.0.0 --port=10809 --export-name=luma \
+# --shared=2: after a phone reset its old connection lingers until TCP gives
+# up; with the default single slot the next boot cannot connect for minutes.
+qemu-nbd --persistent --shared=2 --bind=0.0.0.0 --port=10809 --export-name=luma \
   --format=raw --cache=writeback --discard=unmap "$raw" &
 nbd=$!
 trap 'kill $keeper $nbd $klogger 2>/dev/null || true' EXIT
