@@ -167,6 +167,12 @@ monitor.alsa.rules = [
 ]
 EOF
 
+  # The root lives on the PC over the USB link: a suspend drops the USB
+  # gadget, the root with it, and the phone resets (seen at the login screen).
+  for t in sleep suspend hibernate hybrid-sleep suspend-then-hibernate; do
+    ln -sf /dev/null "$dep/etc/systemd/system/$t.target"
+  done
+
   install -d -m 0755 "$dep/etc/luma-surya"
   cat > "$dep/etc/luma-surya/wifi-up.sh" <<'EOF'
 #!/bin/sh

@@ -45,6 +45,10 @@ sets `nt36xxx_spi_ts.wake_gesture` and `panel_huaxing_nt36672c.stay_powered`, so
 screen-off keeps the panel powered and the touch controller in gesture mode.
 Setting them early in boot (a separate boot service) sent the phone back to
 fastboot; the cause is not known yet.
+
+Suspend is masked: with the root served over USB, suspending (the login
+screen does it after a few idle minutes) drops the USB link and the root,
+and the phone resets.
 Write N to both to turn it off (a little less standby power). The
 microphone and earpiece do not work in mainline yet.
 
