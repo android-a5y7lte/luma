@@ -27,8 +27,15 @@ if [ ! -d "$src/.git" ]; then
   git clone --depth 1 --branch "$ref" "$repo" "$src"
 fi
 git -C "$src" log -1 --format='kernel source: %H %s'
-# Surya changes not (yet) in sm7150-mainline, applied once on top.
-for patch in "$here"/kernel-patches/*.patch; do
+# Surya changes not (yet) in sm7150-mainline, applied once on top. Other trees
+# (e.g. RedLicorice/linux-surya, which already has double tap to wake and the
+# cameras) are built as they are.
+patches=( "$here"/kernel-patches/*.patch )
+case "$repo" in
+  */sm7150-mainline/linux|*/sm7150-mainline/linux.git) ;;
+  *) echo "kernel patches skipped for $repo"; patches=() ;;
+esac
+for patch in "${patches[@]}"; do
   [ -e "$patch" ] || continue
   if git -C "$src" apply --check -R "$patch" 2>/dev/null; then
     echo "kernel patch already applied: $(basename "$patch")"

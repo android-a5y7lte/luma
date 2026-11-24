@@ -84,3 +84,13 @@ CONFIG_MODULE_DECOMPRESS=y
 
 # Camera bring-up: bus scan for sensors without a driver (kernel-patches/0002)
 CONFIG_VIDEO_LUMA_CAMPROBE=m
+# Cameras (trees that have the drivers, e.g. RedLicorice/linux-surya): the
+# WL2866D camera LDOs on i2c9, the five sensors, the main lens and CAMSS.
+CONFIG_REGULATOR_WL2866D=m
+CONFIG_VIDEO_QCOM_CAMSS=m
+CONFIG_VIDEO_IMX682=m
+CONFIG_VIDEO_S5K3T2=m
+CONFIG_VIDEO_HI1337=m
+CONFIG_VIDEO_HI259=m
+CONFIG_VIDEO_OV02B1B=m
+CONFIG_VIDEO_DW9807_VCM=m
