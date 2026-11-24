@@ -1,8 +1,8 @@
 diff --git a/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi b/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
-index 65aee95..2bc7dbf 100644
+index 65aee95..de0a53c 100644
 --- a/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
-@@ -50,6 +50,35 @@ vreg_camera_vdig: regulator-camera-vdig {
+@@ -50,6 +50,38 @@ vreg_camera_vdig: regulator-camera-vdig {
  		vin-supply = <&vreg_bob>;
  	};
  
@@ -17,6 +17,9 @@ index 65aee95..2bc7dbf 100644
 +		vdig-supply = <&vreg_camera_vdig>;
 +		mipi-switch-supply = <&vreg_camera_mipi_switch_en>;
 +		uw-ois-supply = <&vreg_uw_ldo_ois_drv>;
++		/* always on in the vendor DT, unused (so turned off) in mainline */
++		l7c-supply = <&vreg_l7c_3p0>;
++		l8c-supply = <&vreg_l8c_1p8>;
 +		clocks = <&camcc CAMCC_MCLK0_CLK>, <&camcc CAMCC_MCLK1_CLK>,
 +			 <&camcc CAMCC_MCLK2_CLK>, <&camcc CAMCC_MCLK3_CLK>;
 +		power-domains = <&camcc TITAN_TOP_GDSC>;
@@ -38,7 +41,7 @@ index 65aee95..2bc7dbf 100644
  	vreg_camera_mipi_switch_en: gpio-camera-mipi-switch-en {
  		compatible = "regulator-fixed";
  		regulator-name = "camera_mipi_switch_en";
-@@ -464,3 +493,12 @@ &vreg_l18a_2p8 {
+@@ -464,3 +496,12 @@ &vreg_l18a_2p8 {
  &wifi {
  	qcom,ath10k-calibration-variant = "xiaomi_surya";
  };
@@ -81,10 +84,10 @@ index ee30edc..0e303c1 100644
 +obj-$(CONFIG_VIDEO_LUMA_CAMPROBE) += luma-camprobe.o
 diff --git a/drivers/media/i2c/luma-camprobe.c b/drivers/media/i2c/luma-camprobe.c
 new file mode 100644
-index 0000000..ccdbadc
+index 0000000..ffcedc6
 --- /dev/null
 +++ b/drivers/media/i2c/luma-camprobe.c
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,199 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Camera bring-up probe for boards whose sensors have no driver yet: power
@@ -109,7 +112,8 @@ index 0000000..ccdbadc
 +module_param(hold, bool, 0444);
 +MODULE_PARM_DESC(hold, "Keep the cameras powered after the scan (until unload)");
 +
-+static const char * const camprobe_supplies[] = { "vio", "vdig-main", "vdig", "mipi-switch", "uw-ois" };
++static const char * const camprobe_supplies[] = { "vio", "vdig-main", "vdig", "mipi-switch", "uw-ois",
++						  "l7c", "l8c" };
 +
 +struct camprobe {
 +	struct device *dev;
@@ -150,9 +154,12 @@ index 0000000..ccdbadc
 +			camprobe_read(adap, addr, 0x0016, true, b, 2);
 +			camprobe_read(adap, addr, 0x0716, true, c, 2);
 +			camprobe_read(adap, addr, 0x0004, true, d, 2);
++			u8 f[2] = { 0xff, 0xff };
++
 +			camprobe_read(adap, addr, 0x300a, true, e, 2);
-+			dev_info(cp->dev, "%pOF: 0x%02x answers: [0x0000]=%02x%02x [0x0004]=%02x%02x [0x0016]=%02x%02x [0x0716]=%02x%02x [0x300a]=%02x%02x\n",
-+				 bus, addr, a[0], a[1], d[0], d[1], b[0], b[1], c[0], c[1], e[0], e[1]);
++			camprobe_read(adap, addr, 0xf0, false, f, 2);
++			dev_info(cp->dev, "%pOF: 0x%02x answers: [0x0000]=%02x%02x [0x0004]=%02x%02x [0x0016]=%02x%02x [0x0716]=%02x%02x [0x300a]=%02x%02x [8-bit 0xf0]=%02x%02x\n",
++				 bus, addr, a[0], a[1], d[0], d[1], b[0], b[1], c[0], c[1], e[0], e[1], f[0], f[1]);
 +			found++;
 +		} else if (!camprobe_read(adap, addr, 0x02, false, a, 2)) {
 +			dev_info(cp->dev, "%pOF: 0x%02x answers (8-bit regs): [0x02]=%02x [0x03]=%02x\n",
