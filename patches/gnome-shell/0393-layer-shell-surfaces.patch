@@ -1,0 +1,680 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Project Luma <engineering@projectluma.org>
+Date: Sat, 21 Nov 2026 13:00:00 -0500
+Subject: [PATCH] Layer-shell surfaces in the Shell
+
+The compositor's layer overlay group goes right above the windows in
+uiGroup: overlay surfaces cover full-screen windows and stay under
+everything the Shell draws. While the screen shield is up every layer
+surface is hidden.
+
+Grants for the four layer-shell capabilities are read from the permission
+store (table luma, entry display-over-apps) before any app connects,
+handed to Mutter and followed as they change. A surface Mutter fades for
+covering too much of its output gets a name tag the Shell draws: the app's
+icon and name in a pill just outside its top-left corner, in the LumaUI
+overlay colour.
+
+org.projectluma.LayerShell1 at /org/projectluma/LayerShell reports the
+surfaces on screen, the apps showing overlays or faded, each app's grants,
+use and offers, signals clamps and use, and sets a capability or stops an
+app's overlays. The status indicator and the offer here are unstyled
+placeholders built on it.
+---
+ js/js-resources.gresource.xml |   3 +
+ js/ui/layout.js               |  10 +
+ js/ui/lumaLayerShell.js       | 421 ++++++++++++++++++++++++++++++++++
+ js/ui/lumaLayerShellModel.js  | 145 ++++++++++++
+ js/ui/main.js                 |   3 +
+ 5 files changed, 582 insertions(+)
+ create mode 100644 js/ui/lumaLayerShell.js
+ create mode 100644 js/ui/lumaLayerShellModel.js
+
+diff --git a/js/js-resources.gresource.xml b/js/js-resources.gresource.xml
+index a771c23..3f728c2 100644
+--- a/js/js-resources.gresource.xml
++++ b/js/js-resources.gresource.xml
+@@ -98,6 +98,9 @@
+     <file>ui/lumaFocusVisible.js</file>
+     <file>ui/lumaWell.js</file>
+     <file>ui/lumaWellModel.js</file>
++    <file>ui/lumaLayerShell.js</file>
++    <file>ui/lumaLayerShellModel.js</file>
++    <file>ui/lumaLayerShellTokens.js</file>
+     <file>ui/lumaDockBadgeModel.js</file>
+     <file>ui/lumaDockBadges.js</file>
+     <file>ui/lumaDockFolders.js</file>
+diff --git a/js/ui/layout.js b/js/ui/layout.js
+index 71d4978..362912a 100644
+--- a/js/ui/layout.js
++++ b/js/ui/layout.js
+@@ -226,6 +226,14 @@ export const LayoutManager = GObject.registerClass({
+ 
+         global.stage.remove_child(global.window_group);
+         this.uiGroup.add_child(global.window_group);
++
++        // Layer-shell overlay surfaces (lumaLayerShell.js) go right above the
++        // windows, full-screen ones included. Everything the Shell draws --
++        // its panel and shelf, notifications, Quick Options, on-screen
++        // displays, dialogs, the lock screen -- is added after and stays above.
++        const layerOverlayGroup = global.compositor.get_layer_overlay_group();
++        global.stage.remove_child(layerOverlayGroup);
++        this.uiGroup.add_child(layerOverlayGroup);
+         global.connect('shutdown', () => {
+             const monitorManager = global.backend.get_monitor_manager();
+             monitorManager.disconnectObject(this);
+@@ -233,6 +241,7 @@ export const LayoutManager = GObject.registerClass({
+             const adoptedUiGroupActors = [
+                 global.window_group,
+                 global.top_window_group,
++                global.compositor.get_layer_overlay_group(),
+                 global.compositor.get_feedback_group(),
+             ];
+ 
+@@ -1194,6 +1203,7 @@ export const LayoutManager = GObject.registerClass({
+ 
+         global.window_group.visible = windowsVisible;
+         global.top_window_group.visible = windowsVisible;
++        global.compositor.get_layer_overlay_group().visible = windowsVisible;
+ 
+         this._trackedActors.forEach(this._updateActorVisibility.bind(this));
+     }
+diff --git a/js/ui/lumaLayerShell.js b/js/ui/lumaLayerShell.js
+new file mode 100644
+index 0000000..5e779d6
+--- /dev/null
++++ b/js/ui/lumaLayerShell.js
+@@ -0,0 +1,421 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// Layer-shell surfaces (wlr-layer-shell, Mutter 0043-0045) in the Shell.
++//
++// - Overlay surfaces sit in the compositor's layer overlay group, which
++//   layout.js stacks right above the windows: over full-screen apps, under
++//   everything the Shell draws.
++// - While the screen shield is up every layer surface is hidden: not shown,
++//   no input, never the keyboard.
++// - What each app may do is four capabilities (lumaLayerShellModel.js), read
++//   from the permission store, handed to Mutter and followed as they change.
++// - A surface Mutter fades for covering too much of its output gets a name
++//   tag the Shell draws: the app's icon and name in a pill just outside its
++//   top-left corner (design-center 858103d, mockups/overlay-perms/faded.html).
++// - org.projectluma.LayerShell1 (IFACE) on the Shell's session bus name,
++//   object /org/projectluma/LayerShell, carries the rest for the status
++//   indicator, the offer and Settings. The indicator and the offer here are
++//   unstyled placeholders built on it, for tests until their design lands.
++import Clutter from 'gi://Clutter';
++import GLib from 'gi://GLib';
++import GObject from 'gi://GObject';
++import Gio from 'gi://Gio';
++import Shell from 'gi://Shell';
++import St from 'gi://St';
++
++import * as Main from './main.js';
++import * as MessageTray from './messageTray.js';
++import * as Model from './lumaLayerShellModel.js';
++import {OVERLAY} from './lumaLayerShellTokens.js';
++
++const IFACE = `<node>
++  <!-- Capabilities are bits: 1 background, 2 panel, 4 overlay, 8 keyboard.
++       Layers: 0 background, 1 bottom, 2 top, 3 overlay. -->
++  <interface name="org.projectluma.LayerShell1">
++    <!-- Every app layer surface on screen or held back by its grants:
++         (app ID, namespace, layer, capabilities it is using, faded by the
++         40% limit, held waiting for a grant, mapped since: Unix seconds). -->
++    <property name="Surfaces" type="a(ssuubbt)" access="read"/>
++    <!-- Apps with an overlay surface on screen now. -->
++    <property name="OverlayApps" type="as" access="read"/>
++    <!-- Apps with a surface faded by the 40% limit now. -->
++    <property name="FadedApps" type="as" access="read"/>
++    <!-- Every app with a row: granted (u), refused (u), used (u) masks,
++         last_used (a{ut}: capability to Unix seconds), asked (a{ut}: when
++         each was offered). A capability neither granted nor refused takes
++         its default: background and panel for host apps, nothing for
++         sandboxed ones. -->
++    <property name="Apps" type="a{sa{sv}}" access="read"/>
++    <!-- Allow or refuse one capability (Allow, Not now, a switch): stored and
++         applied at once; a surface held for it maps without the app retrying. -->
++    <method name="SetCapability">
++      <arg name="app_id" type="s" direction="in"/>
++      <arg name="capability" type="u" direction="in"/>
++      <arg name="allowed" type="b" direction="in"/>
++    </method>
++    <!-- Unmap an app's overlay surfaces for this session; its grants stay. -->
++    <method name="Stop">
++      <arg name="app_id" type="s" direction="in"/>
++    </method>
++    <!-- A surface was clamped or held for lack of a capability. offer is
++         true the first time for a capability never decided or offered:
++         show the offer now (asked is recorded before this is sent). -->
++    <signal name="Clamped">
++      <arg name="app_id" type="s"/>
++      <arg name="capability" type="u"/>
++      <arg name="offer" type="b"/>
++    </signal>
++    <!-- An app used a capability (first time this session). -->
++    <signal name="Used">
++      <arg name="app_id" type="s"/>
++      <arg name="capability" type="u"/>
++    </signal>
++  </interface>
++</node>`;
++
++const STORE_NAME = 'org.freedesktop.impl.portal.PermissionStore';
++const STORE_PATH = '/org/freedesktop/impl/portal/PermissionStore';
++const STORE_IFACE = 'org.freedesktop.impl.portal.PermissionStore';
++
++// faded.html: a 26 px pill 6 px outside the surface's top-left corner, or
++// inside it, inset 6 px, when there is no room above.
++const TAG_HEIGHT = 26;
++const TAG_GAP = 6;
++
++const now = () => Math.floor(GLib.get_real_time() / GLib.USEC_PER_SEC);
++
++function appInfo(appId) {
++    const app = Shell.AppSystem.get_default().lookup_app(`${appId}.desktop`);
++    return {name: app?.get_name() ?? appId, gicon: app?.get_icon() ?? null};
++}
++
++function offerText(capability, name) {
++    switch (capability) {
++    case Model.Capability.OVERLAY:
++        return _('Allow %s to display over games and full-screen apps?').format(name);
++    case Model.Capability.PANEL:
++        return _('Allow %s to add a panel to the desktop?').format(name);
++    case Model.Capability.BACKGROUND:
++        return _('Allow %s to draw the desktop background?').format(name);
++    case Model.Capability.KEYBOARD:
++        return _('Allow %s to take the keyboard?').format(name);
++    default:
++        return null;
++    }
++}
++
++// The name tag on a faded overlay, drawn by the Shell at full opacity.
++const NameTag = GObject.registerClass(
++class NameTag extends St.BoxLayout {
++    _init(appId) {
++        const {name, gicon} = appInfo(appId);
++        super._init({
++            name: 'lumaLayerNameTag',
++            height: TAG_HEIGHT,
++            style: `spacing: 7px; padding: 0 10px 0 5px; border-radius: 13px;
++                background-color: rgba(18, 19, 22, 0.86);
++                border: 1.5px solid ${OVERLAY};
++                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
++                font-family: Figtree; font-size: 12px; font-weight: 650; color: #ffffff;`,
++        });
++        this.add_child(new St.Icon({
++            gicon: gicon ?? new Gio.ThemedIcon({name: 'application-x-executable'}),
++            icon_size: 16,
++            y_align: Clutter.ActorAlign.CENTER,
++        }));
++        this.add_child(new St.Label({text: name, y_align: Clutter.ActorAlign.CENTER}));
++        this.add_effect_with_name('blur', new Shell.BlurEffect({
++            mode: Shell.BlurMode.BACKGROUND,
++            radius: 12,
++        }));
++    }
++
++    place(window) {
++        const rect = window.get_frame_rect();
++        const monitor = global.display.get_monitor_geometry(window.get_monitor());
++        const above = rect.y - TAG_GAP - TAG_HEIGHT >= monitor.y;
++        this.set_position(above ? rect.x : rect.x + TAG_GAP,
++            above ? rect.y - TAG_GAP - TAG_HEIGHT : rect.y + TAG_GAP);
++    }
++});
++
++// Unstyled placeholder for the status indicator: an icon per overlay app
++// in a plain box at the primary monitor's top-right corner; hovering shows
++// "<App> is displaying over other apps", a click stops it. Its design (the
++// shelf island cell and popover) replaces it.
++const OverlayIndicator = GObject.registerClass(
++class OverlayIndicator extends St.BoxLayout {
++    _init(onStop) {
++        super._init({
++            name: 'lumaLayerOverlayIndicator',
++            reactive: true,
++            style: 'spacing: 6px; padding: 6px; background-color: rgba(0, 0, 0, 0.6);',
++        });
++        this._onStop = onStop;
++        this._label = new St.Label({visible: false, style: 'padding: 4px; background-color: rgba(0, 0, 0, 0.8); color: #ffffff;'});
++        Main.layoutManager.addTopChrome(this);
++        Main.layoutManager.addTopChrome(this._label);
++        this.connect('destroy', () => this._label.destroy());
++    }
++
++    setApps(appIds) {
++        this.destroy_all_children();
++        for (const appId of appIds) {
++            const {name, gicon} = appInfo(appId);
++            const text = _('%s is displaying over other apps').format(name);
++            const button = new St.Button({
++                can_focus: true,
++                track_hover: true,
++                accessible_name: text,
++                child: new St.Icon({
++                    gicon: gicon ?? new Gio.ThemedIcon({name: 'application-x-executable'}),
++                    icon_size: 16,
++                }),
++            });
++            button.connect('notify::hover', () => {
++                this._label.text = text;
++                this._label.visible = button.hover;
++                const [x, y] = button.get_transformed_position();
++                this._label.set_position(Math.max(0, x - 200), y + 30);
++            });
++            button.connect('clicked', () => {
++                this._label.hide();
++                this._onStop(appId);
++            });
++            this.add_child(button);
++        }
++        this.visible = appIds.length > 0;
++        const monitor = Main.layoutManager.primaryMonitor;
++        if (monitor) {
++            const [, width] = this.get_preferred_width(-1);
++            this.set_position(monitor.x + monitor.width - width - 8, monitor.y + 40);
++        }
++    }
++});
++
++class LayerShell {
++    constructor(compositor) {
++        this._compositor = compositor;
++        this._table = {};
++        this._offered = new Set();
++        this._indicator = null;
++        this._tags = new Map();
++
++        this._compositor.connect('layer-shell-clamped',
++            (_c, appId, capability) => this._onClamped(appId, capability));
++        this._compositor.connect('layer-shell-used',
++            (_c, appId, capability) => this._onUsed(appId, capability));
++        this._compositor.connect('layer-shell-surfaces-changed',
++            () => this._onSurfacesChanged());
++
++        this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
++        this._dbus.export(Gio.DBus.session, '/org/projectluma/LayerShell');
++
++        Gio.DBus.session.signal_subscribe(STORE_NAME,
++            STORE_IFACE, 'Changed', STORE_PATH, null, Gio.DBusSignalFlags.NONE,
++            (_conn, _sender, _path, _iface, _signal, params) => {
++                const [table, id, deleted, , permissions] = params.deepUnpack();
++                if (table === Model.TABLE && id === Model.ID)
++                    this._apply(deleted ? {} : permissions);
++            });
++
++        // Before any app connects: an app that was given a capability must
++        // not see its first surface held while the store is being read.
++        this._apply(this._lookupSync());
++
++        Main.sessionMode.connect('updated', () => this._syncHidden());
++        if (Main.screenShield) {
++            Main.screenShield.connect('active-changed', () => this._syncHidden());
++            Main.screenShield.connect('locked-changed', () => this._syncHidden());
++        }
++        this._syncHidden();
++    }
++
++    // org.projectluma.LayerShell1
++
++    get Surfaces() {
++        return this._compositor.get_layer_shell_surfaces().deepUnpack();
++    }
++
++    get OverlayApps() {
++        return this._compositor.get_layer_shell_overlay_apps();
++    }
++
++    get FadedApps() {
++        return this._compositor.get_layer_shell_dimmed_apps();
++    }
++
++    get Apps() {
++        return Object.fromEntries(Object.entries(this._table).map(([appId, row]) => {
++            const d = Model.describe(row);
++            return [appId, {
++                granted: new GLib.Variant('u', d.granted),
++                refused: new GLib.Variant('u', d.refused),
++                used: new GLib.Variant('u', d.used),
++                last_used: new GLib.Variant('a{ut}', d.lastUsed),
++                asked: new GLib.Variant('a{ut}', d.asked),
++            }];
++        }));
++    }
++
++    SetCapability(appId, capability, allowed) {
++        if (!Model.NAMES[capability])
++            throw new Error(`No such capability: ${capability}`);
++        this._set(appId, Model.decide(this._table[appId], capability, allowed));
++    }
++
++    Stop(appId) {
++        this._compositor.stop_layer_overlays(appId);
++    }
++
++    _notify(name, type, value) {
++        this._dbus.emit_property_changed(name, new GLib.Variant(type, value));
++    }
++
++    // Store
++
++    _lookupSync() {
++        try {
++            const reply = Gio.DBus.session.call_sync(STORE_NAME, STORE_PATH,
++                STORE_IFACE, 'Lookup', new GLib.Variant('(ss)', [Model.TABLE, Model.ID]),
++                null, Gio.DBusCallFlags.NONE, 2000, null);
++            const [permissions] = reply.deepUnpack();
++            return {...permissions};
++        } catch (e) {
++            // No row yet, or no store: nothing was decided.
++            console.debug(`Layer shell grants: ${e.message}`);
++            return {};
++        }
++    }
++
++    _apply(table) {
++        for (const [appId, {granted, refused}] of Model.changes(this._table, table))
++            this._compositor.set_layer_shell_grants(appId, granted, refused);
++        this._table = table;
++        this._notify('Apps', 'a{sa{sv}}', this.Apps);
++    }
++
++    _set(appId, permissions) {
++        const {granted, refused} = Model.grantsFor(permissions);
++        this._table = {...this._table, [appId]: permissions};
++        this._compositor.set_layer_shell_grants(appId, granted, refused);
++        this._notify('Apps', 'a{sa{sv}}', this.Apps);
++        Gio.DBus.session.call(STORE_NAME, STORE_PATH, STORE_IFACE,
++            'SetPermission', new GLib.Variant('(sbssas)',
++                [Model.TABLE, true, Model.ID, appId, permissions]),
++            null, Gio.DBusCallFlags.NONE, -1, null, (conn, res) => {
++                try {
++                    conn.call_finish(res);
++                } catch (e) {
++                    console.warn(`Layer shell grants: ${appId}: ${e.message}`);
++                }
++            });
++    }
++
++    // Mutter
++
++    _syncHidden() {
++        const hidden = Main.sessionMode.isLocked || !!Main.screenShield?.active;
++        this._compositor.set_layer_surfaces_hidden(hidden);
++    }
++
++    _onUsed(appId, capability) {
++        this._dbus.emit_signal('Used', new GLib.Variant('(su)', [appId, capability]));
++        this._set(appId, Model.markUsed(this._table[appId], capability, now()));
++    }
++
++    _onClamped(appId, capability) {
++        const key = `${appId}\x1f${capability}`;
++        const offer = Model.shouldOffer(this._table[appId], capability) && !this._offered.has(key);
++        if (offer) {
++            this._offered.add(key);
++            this._set(appId, Model.markAsked(this._table[appId], capability, now()));
++        }
++        this._dbus.emit_signal('Clamped', new GLib.Variant('(sub)', [appId, capability, offer]));
++        if (offer)
++            this._offerPlaceholder(appId, capability);
++    }
++
++    // Unstyled placeholder for the offer: Allow, Not now; dismissing counts
++    // as Not now. Its design replaces it.
++    _offerPlaceholder(appId, capability) {
++        const {name, gicon} = appInfo(appId);
++        const source = MessageTray.getSystemSource();
++        const notification = new MessageTray.Notification({
++            source,
++            title: name,
++            body: offerText(capability, name),
++            gicon,
++            isTransient: false,
++        });
++        let answered = false;
++        notification.addAction(_('Allow'), () => {
++            answered = true;
++            this.SetCapability(appId, capability, true);
++        });
++        notification.addAction(_('Not now'), () => {
++            answered = true;
++            this.SetCapability(appId, capability, false);
++        });
++        notification.connect('destroy', (_n, reason) => {
++            if (!answered && reason === MessageTray.NotificationDestroyedReason.DISMISSED)
++                this.SetCapability(appId, capability, false);
++        });
++        source.addNotification(notification);
++    }
++
++    _onSurfacesChanged() {
++        this._notify('Surfaces', 'a(ssuubbt)', this.Surfaces);
++        this._notify('OverlayApps', 'as', this.OverlayApps);
++        this._notify('FadedApps', 'as', this.FadedApps);
++        this._syncTags();
++        this._syncIndicator();
++    }
++
++    _syncTags() {
++        const faded = this._compositor.get_layer_shell_faded_windows();
++        for (const [window, tag] of this._tags) {
++            if (!faded.includes(window)) {
++                tag.destroy();
++                this._tags.delete(window);
++            }
++        }
++        for (const window of faded) {
++            let tag = this._tags.get(window);
++            if (!tag) {
++                const appId = this._compositor.get_layer_shell_app_id(window) ?? '';
++                tag = new NameTag(appId);
++                // Right above the overlays, under everything else the Shell draws.
++                Main.layoutManager.uiGroup.insert_child_above(tag,
++                    global.compositor.get_layer_overlay_group());
++                const update = () => tag.place(window);
++                window.connectObject('position-changed', update, 'size-changed', update, tag);
++                this._tags.set(window, tag);
++            }
++            tag.place(window);
++        }
++    }
++
++    _syncIndicator() {
++        const apps = this.OverlayApps;
++        if (apps.length === 0 && !this._indicator)
++            return;
++        if (!this._indicator) {
++            this._indicator = new OverlayIndicator(appId => this.Stop(appId));
++        }
++        this._indicator.setApps(apps);
++    }
++}
++
++let layerShell = null;
++
++export function init() {
++    const compositor = global.context.get_wayland_compositor?.();
++    if (!compositor || layerShell)
++        return;
++
++    try {
++        layerShell = new LayerShell(compositor);
++    } catch (e) {
++        logError(e, 'Failed to set up layer-shell surfaces');
++    }
++}
+diff --git a/js/ui/lumaLayerShellModel.js b/js/ui/lumaLayerShellModel.js
+new file mode 100644
+index 0000000..378ff13
+--- /dev/null
++++ b/js/ui/lumaLayerShellModel.js
+@@ -0,0 +1,145 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// What apps may do with the layer shell (bars, launchers, overlays), without
++// a Shell. No gi imports, so %check runs it under plain gjs.
++//
++// Four capabilities, granted per app (Mutter 0043, MetaLayerShellCapabilities):
++//   background  the background layer
++//   panel       bottom and top layers, exclusive zones: bars, docks, launchers
++//   overlay     the overlay layer, over games and full-screen apps
++//   keyboard    the keyboard as soon as a surface appears (exclusive)
++// Host apps have background and panel unless refused; sandboxed apps
++// nothing until granted.
++//
++// Where it is kept: the permission store
++// (org.freedesktop.impl.portal.PermissionStore), table TABLE, entry ID, one
++// row per app ID (Flatpak ID, desktop-file ID without ".desktop", or an
++// executable's name). Tokens in a row: "overlay" granted, "-overlay"
++// refused (switched off, or "Not now" on the offer), "used-overlay@T" last
++// used at Unix time T, "asked-overlay@T" offered at T; the same for each
++// capability. Settings shows and switches the
++// same rows (gnome-control-center 0109).
++
++export const TABLE = 'luma';
++export const ID = 'display-over-apps';
++
++// The same bits as Meta.LayerShellCapabilities.
++export const Capability = Object.freeze({
++    BACKGROUND: 1 << 0,
++    PANEL: 1 << 1,
++    OVERLAY: 1 << 2,
++    KEYBOARD: 1 << 3,
++});
++
++export const NAMES = Object.freeze({
++    [Capability.BACKGROUND]: 'background',
++    [Capability.PANEL]: 'panel',
++    [Capability.OVERLAY]: 'overlay',
++    [Capability.KEYBOARD]: 'keyboard',
++});
++
++export const ALL = Object.keys(NAMES).map(Number);
++
++function rowOf(permissions) {
++    return Array.isArray(permissions) ? permissions : [];
++}
++
++// {granted, refused} masks for Meta.WaylandCompositor.set_layer_shell_grants.
++export function grantsFor(permissions) {
++    const row = rowOf(permissions);
++    let granted = 0, refused = 0;
++    for (const cap of ALL) {
++        if (row.includes(NAMES[cap]))
++            granted |= cap;
++        if (row.includes(`-${NAMES[cap]}`))
++            refused |= cap;
++    }
++    return {granted, refused: refused & ~granted};
++}
++
++export function isDecided(permissions, cap) {
++    const row = rowOf(permissions);
++    return row.includes(NAMES[cap]) || row.includes(`-${NAMES[cap]}`);
++}
++
++function stamped(permissions, prefix) {
++    const token = rowOf(permissions).find(t => t === prefix || t.startsWith(`${prefix}@`));
++    if (!token)
++        return null;
++    return Number(token.split('@')[1] ?? 0) || 0;
++}
++
++function stamp(permissions, prefix, now) {
++    const row = rowOf(permissions).filter(t => t !== prefix && !t.startsWith(`${prefix}@`));
++    row.push(`${prefix}@${Math.floor(now)}`);
++    return row;
++}
++
++export function wasUsed(permissions, cap) {
++    return stamped(permissions, `used-${NAMES[cap]}`) !== null;
++}
++
++// When it was last used (Unix seconds), 0 if not known or never.
++export function lastUsed(permissions, cap) {
++    return stamped(permissions, `used-${NAMES[cap]}`) ?? 0;
++}
++
++// When the offer was made (Unix seconds), 0 if never.
++export function askedAt(permissions, cap) {
++    return stamped(permissions, `asked-${NAMES[cap]}`) ?? 0;
++}
++
++// The row after allowing or refusing @cap; every other token is kept.
++export function decide(permissions, cap, allowed) {
++    const name = NAMES[cap];
++    const row = rowOf(permissions).filter(t => t !== name && t !== `-${name}`);
++    row.push(allowed ? name : `-${name}`);
++    return row;
++}
++
++// The row once @cap was used at @now (Unix seconds).
++export function markUsed(permissions, cap, now) {
++    return stamp(permissions, `used-${NAMES[cap]}`, now);
++}
++
++// The row once @cap was offered at @now.
++export function markAsked(permissions, cap, now) {
++    return stamp(permissions, `asked-${NAMES[cap]}`, now);
++}
++
++// Offered once per app and capability: only while it is undecided and was
++// never offered. "Not now", or dismissing the offer, refuses it; the only
++// way back is the switch in Settings.
++export function shouldOffer(permissions, cap) {
++    return !isDecided(permissions, cap) && !askedAt(permissions, cap) &&
++        !rowOf(permissions).includes(`asked-${NAMES[cap]}`);
++}
++
++// What D-Bus (org.projectluma.LayerShell1.Apps) says about one row.
++export function describe(permissions) {
++    const {granted, refused} = grantsFor(permissions);
++    let used = 0;
++    const lastUsedAt = {}, asked = {};
++    for (const cap of ALL) {
++        if (wasUsed(permissions, cap)) {
++            used |= cap;
++            lastUsedAt[cap] = lastUsed(permissions, cap);
++        }
++        if (askedAt(permissions, cap))
++            asked[cap] = askedAt(permissions, cap);
++    }
++    return {granted, refused, used, lastUsed: lastUsedAt, asked};
++}
++
++// What changed between two tables ({appId: permissions}): [appId, grants]
++// for every app whose grants differ, removed rows granting nothing.
++export function changes(before, after) {
++    const result = [];
++    const ids = new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
++    for (const id of [...ids].sort()) {
++        const was = grantsFor(before?.[id]);
++        const is = grantsFor(after?.[id]);
++        if (!(id in (before ?? {})) || was.granted !== is.granted || was.refused !== is.refused)
++            result.push([id, is]);
++    }
++    return result;
++}
+diff --git a/js/ui/main.js b/js/ui/main.js
+index 17a9ee6..ed3c614 100644
+--- a/js/ui/main.js
++++ b/js/ui/main.js
+@@ -39,6 +39,7 @@ import * as LumaWindowCorners from './lumaWindowCorners.js';
+ import * as LumaWindowWatch from './lumaWindowWatch.js';
+ import * as LumaSession from './lumaSession.js';
+ import * as LumaShare from './lumaShare.js';
++import * as LumaLayerShell from './lumaLayerShell.js';
+ import * as NotificationDaemon from './notificationDaemon.js';
+ import * as WindowAttentionHandler from './windowAttentionHandler.js';
+ import * as Screenshot from './screenshot.js';
+@@ -333,6 +334,8 @@ async function _initializeUI() {
+     });
+ 
+     layoutManager.init();
++    if (!sessionMode.isGreeter)
++        LumaLayerShell.init();
+     overview.init();
+     // The Shelf adopts the overview's Dash, so it exists only in sessions that
+     // have an overview. Initial setup has none: building the Shelf there threw

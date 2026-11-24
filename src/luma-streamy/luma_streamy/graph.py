@@ -162,10 +162,38 @@ def hardware_decode() -> bool:
 _HW: bool | None = None
 
 
+def gpu_decoders_first(_decodebin, _pad, caps):
+    """decodebin's ``autoplug-factories`` on a camera decoded on the GPU: its usual choice for ``caps``,
+    with VA's JPEG decoder first for MJPEG. vajpegdec has rank none, so decodebin alone decodes MJPEG on
+    the CPU, and vapostproc hands GL that picture as a linear DMABuf that never reaches the canvas. A
+    JPEG not parsed yet goes to the parser first (vajpegdec takes parsed frames only)."""
+    from gi.repository import Gst
+
+    factories = Gst.ElementFactory.list_filter(
+        Gst.ElementFactory.list_get_elements(Gst.ELEMENT_FACTORY_TYPE_DECODABLE, Gst.Rank.MARGINAL),
+        caps, Gst.PadDirection.SINK, False)
+    factories.sort(key=lambda f: f.get_rank(), reverse=True)
+    structure = caps.get_structure(0) if caps is not None and caps.get_size() else None
+    va = Gst.ElementFactory.find("vajpegdec")
+    if va is None or structure is None or structure.get_name() != "image/jpeg":
+        return factories
+    if structure.has_field("parsed"):
+        return [va] + [f for f in factories if f.get_name() != "vajpegdec"]
+    return sorted(factories, key=lambda f: "Parser" not in (f.get_metadata("klass") or ""))
+
+
+#: A decodebin added to the running program completes its own state change: it needs data to finish
+#: (MJPEG is parsed first), and a child's async start makes the whole pipeline lose its state, so the
+#: rest of the branch would join PAUSED, its live source would send nothing, and the program would
+#: wait forever.
+DECODE_ASYNC = {"async-handling": True}
+
+
 def _capture_head(widget: Widget, prefix: str, fake: bool, fd: int | None, node: str | None,
                   hw_decode: bool = False) -> list[Element]:
     kind = widget.kind
-    if fake:
+    fake_caps = widget.source.get("fake-caps") if fake else None
+    if fake and not fake_caps:
         if widget.source.get("fake-silent"):
             # A check run's stream that opens and never sends a picture (a window that never redraws).
             return [Element("appsrc", f"{prefix}-src", {"is-live": True, "format": "time", "caps":
@@ -198,6 +226,17 @@ def _capture_head(widget: Widget, prefix: str, fake: bool, fd: int | None, node:
         # WirePlumber links a camera-portal client's stream only when it says it is a camera.
         props["stream-properties"] = "props,media.role=Camera"
     head = [Element("pipewiresrc", f"{prefix}-src", props)]
+    if fake_caps:
+        # A check run's capture in exactly the caps a real one sends (format, size, MJPEG), followed
+        # by the same chain as that capture.
+        if str(fake_caps).startswith("image/jpeg"):
+            raw = str(fake_caps).replace("image/jpeg", "video/x-raw,format=I420", 1)
+            head = [Element("videotestsrc", f"{prefix}-src", {"is-live": True, "pattern": "smpte100"}),
+                    Element("capsfilter", f"{prefix}-fake", {"caps": raw}),
+                    Element("jpegenc", f"{prefix}-jpeg", {"quality": 60})]
+        else:
+            head = [Element("videotestsrc", f"{prefix}-src", {"is-live": True, "pattern": "smpte100"}),
+                    Element("capsfilter", f"{prefix}-fake", {"caps": str(fake_caps)})]
     if kind == "window":
         # Its caps are set to what downstream takes, alpha formats first (Engine._alpha_first): a
         # window's rounded corners stay transparent.
@@ -216,12 +255,12 @@ def _capture_head(widget: Widget, prefix: str, fake: bool, fd: int | None, node:
         if hw_decode:
             # The GPU decodes (vajpegdec) and vapostproc hands GL a DMABuf: no picture crosses the CPU.
             # A raw camera's frames are uploaded by vapostproc the same way.
-            head += [Element("decodebin", f"{prefix}-decode"),
+            head += [Element("decodebin", f"{prefix}-decode", DECODE_ASYNC),
                      Element("vapostproc", f"{prefix}-vapp"),
                      Element("capsfilter", f"{prefix}-dmabuf", {"caps": "video/x-raw(memory:DMABuf)"})]
         else:
             # Software: a VA decoder's VA memory is something videoconvert can't take.
-            head += [Element("decodebin", f"{prefix}-decode", {"force-sw-decoders": True}),
+            head += [Element("decodebin", f"{prefix}-decode", {"force-sw-decoders": True, **DECODE_ASYNC}),
                      Element("videoconvert", f"{prefix}-convert")]
     return head
 
@@ -273,6 +312,12 @@ def picture_chain(widget: Widget, zorder: int, *, fake: bool = False, fd: int | 
     ``hw_decode``)."""
     prefix = branch_prefix(widget, generation)
     elements = _capture_head(widget, prefix, fake, fd, node, hw_decode)
+    if widget.kind in ("camera", "display", "window"):
+        # Parked while no shown scene uses it: the source stays open, its pictures are dropped before
+        # they are decoded, uploaded or converted (its stream stays negotiated). A camera's all of them;
+        # a screen's but one a second (Engine._trickle), so it has a recent picture to show at once.
+        at = next((i for i, e in enumerate(elements) if e.factory == "decodebin"), len(elements))
+        elements.insert(at, Element("valve", f"{prefix}-park", {"drop": False, "drop-mode": "forward-sticky-events"}))
     elements += [
         Element("queue", f"{prefix}-queue", {"max-size-buffers": 2, "leaky": 2}),
         Element("glupload", f"{prefix}-upload"),
@@ -302,8 +347,11 @@ LAYER_LATENCY = {"source-latency": 0}
 
 def layer_chain(widget: Widget, zorder: int, prefix: str, fmt: str) -> Chain:
     """A picture widget drawn on canvas ``fmt``: ``widget`` is placed and styled as that canvas has it.
-    The queue lets one canvas's mixer never hold up another's."""
-    return Chain([Element("queue", f"{prefix}-{fmt}-lqueue", {"max-size-buffers": 1, "max-size-bytes": 0,
+    The valve passes pictures only while the widget's scene is shown (a widget of another scene costs
+    nothing but its place); the queue lets one canvas's mixer never hold up another's."""
+    # Closed, it still passes the stream's caps and segment: the layer stays negotiated, ready to draw.
+    return Chain([Element("valve", f"{prefix}-{fmt}-valve", {"drop": False, "drop-mode": "forward-sticky-events"}),
+                  Element("queue", f"{prefix}-{fmt}-lqueue", {"max-size-buffers": 1, "max-size-bytes": 0,
                                                                "max-size-time": 0, "leaky": 2}),
                   Element("lumaframe", f"{prefix}-{fmt}-frame", {**frame_props(widget), **LAYER_LATENCY})],
                  f"mixer-{fmt}", mixer_pad_props(widget, zorder))
@@ -386,6 +434,8 @@ def sound_chain(widget: Widget, *, fake: bool = False, fd: int | None = None, no
         Element("level", f"{prefix}-level", {"interval": 100_000_000, "post-messages": True}),
         # The monitor (headphones) hangs off this tee only while it is on.
         Element("tee", f"{prefix}-atee", {"allow-not-linked": True}),
+        # Heard in what is sent only while a shown scene uses it: faded on the program clock.
+        Element("volume", f"{prefix}-gate", {"volume": 1.0}),
         Element("queue", f"{prefix}-aqueue", {"max-size-time": 200_000_000, "leaky": 2}),
     ], "audiomixer", {"mute": widget.monitor == "only"})
 
@@ -511,26 +561,39 @@ def tap_sound() -> list[Element]:
                                              "sync": False, "async": False})]
 
 
-def video_encoder_chain(choice: EncoderChoice, bitrate_kbps: int, prefix: str) -> list[Element]:
-    """NV12 pictures to an encoded stream: CBR, a key frame every 2 s, no B-frames."""
-    gop = 2 * FPS
+def video_encoder_chain(choice: EncoderChoice, bitrate_kbps: int, prefix: str, *, fps: int = FPS,
+                        scale: tuple[int, int] | None = None, gpu_scale: bool = False) -> list[Element]:
+    """NV12 pictures to an encoded stream: CBR, a key frame every 2 s, no B-frames. ``scale`` (width,
+    height) scales the pictures first: before a VA encoder on the GPU with ``gpu_scale`` (vapostproc
+    uploads and scales in one pass and hands the encoder its surfaces), else on the CPU (in the software
+    encoders' own conversion)."""
+    gop = 2 * fps
     f = choice.video
+    size = f",width={scale[0]},height={scale[1]},pixel-aspect-ratio=1/1" if scale else ""
     if f.startswith("va"):
-        head = []  # VA encoders take NV12 from system memory and upload it themselves
+        if scale and gpu_scale:
+            head = [Element("vapostproc", f"{prefix}-scale"),
+                    Element("capsfilter", f"{prefix}-size",
+                            {"caps": f"video/x-raw(memory:VAMemory),format=NV12{size}"})]
+        elif scale:
+            head = [Element("videoscale", f"{prefix}-scale"),
+                    Element("capsfilter", f"{prefix}-size", {"caps": f"video/x-raw,format=NV12{size}"})]
+        else:
+            head = []  # VA encoders take NV12 from system memory and upload it themselves
         props = {"rate-control": "cbr", "bitrate": bitrate_kbps, "key-int-max": gop}
         if "h26" in f:
             props["b-frames"] = 0
     elif f == "svtav1enc":
-        head = [Element("videoconvert", f"{prefix}-convert"),
-                Element("capsfilter", f"{prefix}-i420", {"caps": "video/x-raw,format=I420"})]
+        head = [Element("videoconvertscale" if scale else "videoconvert", f"{prefix}-convert"),
+                Element("capsfilter", f"{prefix}-i420", {"caps": f"video/x-raw,format=I420{size}"})]
         # Real-time: the fastest preset, rate-controlled to the bitrate (crf off), a key frame every
         # 2 s. SVT-AV1's CBR needs its low-delay structure, which stalls in GStreamer 1.28, so this
         # is its bitrate-targeted VBR, which AV1 destinations (enhanced RTMP, files) take.
         props = {"preset": SVTAV1_PRESET, "target-bitrate": bitrate_kbps, "crf": -1,
                  "intra-period-length": gop - 1}
     else:
-        head = [Element("videoconvert", f"{prefix}-convert"),
-                Element("capsfilter", f"{prefix}-i420", {"caps": "video/x-raw,format=I420"})]
+        head = [Element("videoconvertscale" if scale else "videoconvert", f"{prefix}-convert"),
+                Element("capsfilter", f"{prefix}-i420", {"caps": f"video/x-raw,format=I420{size}"})]
         props = {"bitrate": bitrate_kbps * 1000, "rate-control": "bitrate", "gop-size": gop,
                  "complexity": "low", "usage-type": "screen"}
     parse = "h264parse" if choice.codec == "h264" else "av1parse"

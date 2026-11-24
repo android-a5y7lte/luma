@@ -25,10 +25,15 @@ patches = [
   "patches/linux-milos/0040-iio-imu-inv-icm42600-add-icm42630.patch",
   "patches/linux-milos/0041-scsi-ufs-qcom-power-down-ufs-during-system-suspend-on-milos.patch",
   "patches/linux-milos/0042-Input-eswin_eph861x-reset-the-controller-before-unmasking.patch",
+  "patches/linux-milos/0043-power-supply-qcom_battmgr-derive-SM8350-power_now-from-voltage-and-current.patch",
 ]
 dtb = "qcom/milos-fairphone-fp6.dtb"
 # The boot DTB is the built dtb with these overlays (scripts/kernel/compose-fp6-dtb.sh).
 dtb_overlays = "luma/fp6/alpha1/dtb"
+# The package that brings this kernel to phones (its boot image and modules;
+# [boot_update]) and how the ARM nightly builds it when its release changes.
+package = "kernel-modules-luma-fp6"
+build = "scripts/devices/build-fp6-kernel-package.sh"
 
 [kernel.android_gpu]
 # Android GPU admission (scripts/kernel/fp6-android-gpu-admission.py). The
@@ -51,7 +56,7 @@ qualified_gpu_inputs = "3a677fbc9d995fdfea158333f9e79836a441b88f42d324f012409bdd
 qualified_notes_sha256 = "bd0064a79692982e68a272389017eb4018cd58b7bd3b82787af5b7574859c617"
 # Stamped by `fp6-android-gpu-admission.py stamp`; CI fails when the [kernel]
 # inputs change without restamping.
-kernel_inputs = "cad021489996c4b613b04af08386b9ad1ce44e0a1b6b3bf1f811f4fe957f3519"
+kernel_inputs = "b329e7ea7febfc0dcf21c514e7c29d0d58141f7c6106b75dd5f59a7e23a3492f"
 admitted = true
 
 [boot]

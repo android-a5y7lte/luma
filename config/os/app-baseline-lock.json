@@ -2,10 +2,10 @@
   "schema": "org.projectluma.os-app-baseline-lock/v1",
   "baselines": {
     "aarch64": {
-      "manifest_sha256": "16736a9f359958a1348529fc44f8ec2bb641dff1cdd6264306197dd9b755304c"
+      "manifest_sha256": "00ae5f5adfc887cd9b559f6431bbc94dbdcf9ab6d6b118ed8a336d798a266de0"
     },
     "x86_64": {
-      "manifest_sha256": "559e6290e23a295a77f94abef1b9d1abc994f30a116391852dac56093aebb608"
+      "manifest_sha256": "5c1960126cfa0b944e252f0436a71762ea3ce07a5a011a5f7bad2b16d097ed55"
     }
   },
   "applications": {
@@ -91,14 +91,15 @@
     },
     "org.projectluma.Depot": {
       "commits": {
-        "aarch64": "ba22a809f46ed131eb19b43b425d9c749a7f6ace15d9dd963f203348cc53d561",
-        "x86_64": "0914252d92f275c6464ef4dc88512d708b97d5b7e100a56a88f4e826739df2ad"
+        "aarch64": "3840cf0ad63bfcedda5ef0b1de340147dbe2c2b0490702763afd14fd741853b5",
+        "x86_64": "dc623400dec6c6b0b8f5cbbd364b30000914c0a36f4311f678b88ffe1a502827"
       },
-      "source_sha256": "49422bda503b9dd99a3746a6b5158e457728ad8c3e09e97da36403a50185a90e",
-      "version": "0.1.5",
+      "source_sha256": "0f0817a00a5587bd3889a145ce1b44cf7c940bde7f016e7ed4e5e524690be12d",
+      "version": "0.1.7",
       "pending": {
-        "reason": "only host-side luma_installer.system_app_updates changed (luma-application-installer 1.luma.96); the app does not run it, the next Depot rebuild carries it; 1.luma.97 changes only Valet (installer, workflow.added_appimage); 1.luma.98 changes only the capsule launcher (launcher); 1.luma.99 changes Valet and the capsule launcher (appimage_run, backends, capsule_runtime, desktop, installer, launcher); 1.luma.100 changes only the capsule launcher (backends, capsule_identity, launcher); 1.luma.101 changes the capsule launcher and removal (backends, capsule_display, capsule_identity, capsule_runtime, capsule_scope, capsule_secrets, launcher, manager); 1.luma.102 adds capsule updates on the host side (capsule_refresh, depot_inventory, launcher, manager)",
-        "expires": "2026-11-23"
+        "reason": "installer 1.luma.108 (#537); combined reseal to Depot 0.1.8 after #562",
+        "expires": "2026-11-24",
+        "source_sha256": "8238cf45dd8f0d9cad9ce0f24f4ea589aa2ab0e78b0c4e10d24cb0208737d840"
       }
     },
     "org.projectluma.Imager": {

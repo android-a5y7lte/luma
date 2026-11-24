@@ -2,7 +2,7 @@
 
 Name:           luma-application-installer
 Version:        0.1.0
-Release:        1.luma.103%{?dist}
+Release:        1.luma.107%{?dist}
 Summary:        Project Luma universal application package broker
 License:        Apache-2.0
 URL:            https://projectluma.org/applications
@@ -55,6 +55,18 @@ Requires:       pipewire >= 1.2
 Requires:       wireplumber >= 0.5.9
 # Debian capsules reach the network through slirp4netns (backends._install_deb).
 Requires:       slirp4netns
+# The application store (ADR-052): trees are commits in an OSTree repository,
+# built on the device by each distribution's own tools, without root.
+Requires:       ostree
+Requires:       util-linux-core
+Requires:       shadow-utils-subid
+# Debian and Ubuntu userlands: the bootstrap and the archive keys it is checked against.
+Requires:       debootstrap
+Requires:       debian-keyring
+Requires:       ubu-keyring
+# Fedora userlands: dnf5 --installroot, checked against the release keys.
+Requires:       dnf5
+Requires:       fedora-gpg-keys
 # Publisher repository keys and APT index signatures are checked with gpg.
 Requires:       gnupg2
 Requires:       polkit
@@ -180,6 +192,16 @@ install -D -m 0644 data/luma-capsule-refresh.service %{buildroot}%{_userunitdir}
 install -D -m 0644 data/luma-capsule-refresh.timer %{buildroot}%{_userunitdir}/luma-capsule-refresh.timer
 ln -s ../luma-capsule-refresh.timer \
   %{buildroot}%{_userunitdir}/graphical-session.target.wants/luma-capsule-refresh.timer
+# The application store: its tool, the per-release data it builds from, and
+# the background move of existing capsules into it.
+install -D -m 0755 bin/luma-app-closure %{buildroot}%{_bindir}/luma-app-closure
+install -D -m 0755 bin/luma-app-migrate %{buildroot}%{_bindir}/luma-app-migrate
+install -D -m 0644 data/userland-baseline.json %{buildroot}%{_datadir}/luma/installer/userland-baseline.json
+install -D -m 0644 data/graphics-layers.json %{buildroot}%{_datadir}/luma/installer/graphics-layers.json
+install -D -m 0644 data/luma-app-migrate.service %{buildroot}%{_userunitdir}/luma-app-migrate.service
+install -D -m 0644 data/luma-app-migrate.timer %{buildroot}%{_userunitdir}/luma-app-migrate.timer
+ln -s ../luma-app-migrate.timer \
+  %{buildroot}%{_userunitdir}/graphical-session.target.wants/luma-app-migrate.timer
 # crun with the application scoped; Podman knows a runtime by its file name.
 install -D -m 0755 bin/luma-capsule-runtime %{buildroot}%{_libexecdir}/luma-capsule-runtime/crun
 install -D -m 0644 data/pipewire/60-luma-application-socket.conf \
@@ -189,6 +211,19 @@ install -D -m 0644 data/pipewire/70-luma-application-access.conf \
 install -D -m 0644 data/pipewire/application-capture.lua \
   %{buildroot}%{_datadir}/wireplumber/scripts/luma/application-capture.lua
 install -D -m 0755 bin/luma-app-data-broker %{buildroot}%{_libexecdir}/luma-app-data-broker
+# One permission store for every format (ADR-052 step 3): the service, the
+# keeper of running applications' folder views, the refusal watch (root, AVCs
+# on the refusal stub only), the native-messaging broker, and the stub used
+# where SELinux cannot report a refusal.
+install -D -m 0755 bin/luma-app-permissions %{buildroot}%{_libexecdir}/luma-app-permissions
+install -D -m 0755 bin/luma-refusal-watch %{buildroot}%{_libexecdir}/luma-refusal-watch
+install -D -m 0755 bin/luma-native-messaging %{buildroot}%{_bindir}/luma-native-messaging
+install -D -m 0644 data/luma-app-permissions.service %{buildroot}%{_userunitdir}/luma-app-permissions.service
+install -D -m 0644 data/luma-app-views.service %{buildroot}%{_userunitdir}/luma-app-views.service
+install -D -m 0644 data/org.projectluma.AppPermissions1.service %{buildroot}%{_datadir}/dbus-1/services/org.projectluma.AppPermissions1.service
+install -D -m 0644 data/luma-refusal-watch.service %{buildroot}%{_unitdir}/luma-refusal-watch.service
+ln -s ../luma-refusal-watch.service %{buildroot}%{_unitdir}/multi-user.target.wants/luma-refusal-watch.service
+install -d -m 0000 %{buildroot}%{_datadir}/luma-installer/refused
 install -D -m 0755 bin/luma-seed-app-baseline %{buildroot}%{_bindir}/luma-seed-app-baseline
 install -D -m 0644 data/luma-app-baseline.service %{buildroot}%{_unitdir}/luma-app-baseline.service
 install -D -m 0644 data/luma-app-baseline-display-manager.conf \
@@ -312,7 +347,23 @@ update-desktop-database %{_datadir}/applications >/dev/null 2>&1 || :
 %{_userunitdir}/luma-capsule-refresh.service
 %{_userunitdir}/luma-capsule-refresh.timer
 %{_userunitdir}/graphical-session.target.wants/luma-capsule-refresh.timer
+%{_bindir}/luma-app-closure
+%{_bindir}/luma-app-migrate
+%{_datadir}/luma/installer/userland-baseline.json
+%{_datadir}/luma/installer/graphics-layers.json
+%{_userunitdir}/luma-app-migrate.service
+%{_userunitdir}/luma-app-migrate.timer
+%{_userunitdir}/graphical-session.target.wants/luma-app-migrate.timer
 %{_libexecdir}/luma-app-data-broker
+%{_libexecdir}/luma-app-permissions
+%{_libexecdir}/luma-refusal-watch
+%{_bindir}/luma-native-messaging
+%{_userunitdir}/luma-app-permissions.service
+%{_userunitdir}/luma-app-views.service
+%{_datadir}/dbus-1/services/org.projectluma.AppPermissions1.service
+%{_unitdir}/luma-refusal-watch.service
+%{_unitdir}/multi-user.target.wants/luma-refusal-watch.service
+%dir %attr(0000,root,root) %{_datadir}/luma-installer/refused
 %{_bindir}/luma-seed-app-baseline
 %{_unitdir}/luma-app-baseline.service
 %{_unitdir}/graphical.target.wants/luma-app-baseline.service
@@ -345,6 +396,70 @@ update-desktop-database %{_datadir}/applications >/dev/null 2>&1 || :
 %{_unitdir}/timers.target.wants/luma-depot-appstream.timer
 
 %changelog
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.107
+- One permission store for every format (ADR-052 step 3): grants keyed by
+  application ID in the desktop's permission store, the
+  org.projectluma.AppPermissions1 service for the install sheet, Settings
+  and the folder offer (app_permissions).
+- File levels from what an application is, read from the package before it
+  is installed and shown in the install transaction (package_access).
+- Store trees, capsules and AppImages see every home folder at its real
+  path; a folder they may not use is a refusal stub (EACCES), hidden folders
+  never appear, and grants apply while the application runs
+  (permission_views, luma-app-views.service).
+- Refusals are read from SELinux AVCs without blocking the application and
+  offered once per application and folder (luma-refusal-watch.service).
+- Flatpak home and host requests become a file level; protected paths are
+  excluded, nothing is redirected (flatpak_permissions).
+- A package's udev rules become a device request; granted, its device nodes
+  are present in the sandbox (device_requests).
+- A native-messaging broker between browsers and applications in different
+  sandboxes (native_messaging).
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.106
+- SELinux: capsules and store applications may use ~/Music (audio_home_t)
+  with the same rights as the other standard folders (user_home_t). A music
+  player saw the folder and could not list, read or save into it.
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.105
+- The keyring broker never lets an application search, read, adopt or
+  write entries of Luma's own schemas (org.projectluma.*).
+
+* Sat Nov 21 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.104
+- Package files (.deb, .rpm, AppImage, archives) are installed into the
+  application store (ADR-052): a tree of the package and its dependencies,
+  built on the device by its own distribution's tools without root, kept as
+  a commit in one OSTree repository and started with bubblewrap. No
+  container engine runs at launch. If the build, the library check or a
+  hidden first start fails, the package is installed as a podman capsule as
+  before and its record says why (store_install, store_fallback).
+- One session boundary for capsules and store applications
+  (session_boundary): keyring broker, filtered accessibility bus, play-only
+  sound socket, an X socket without the session's cookie, Landlock scope,
+  allocated category pairs, systemd scope.
+- A system-call filter for everything started with bubblewrap
+  (sandbox_seccomp), modelled on Flatpak's; nested user namespaces stay.
+- SELinux: executable JIT memory for an application's own anonymous files,
+  watches on its read-only tree, file contexts for the store.
+- Session-bus names an application may own are derived from its package's
+  launchers, D-Bus service files and program (bus_names).
+- The undeclared-library check follows the launcher's program and skips
+  libraries the package ships (tree_check); the desktop baseline is recorded
+  per release (userland-baseline.json).
+- Updates for store applications: hidden start, swap between runs,
+  rollback, hold, vendor repositories recorded at install (store_refresh),
+  on the capsule refresh schedule.
+- Existing capsules move to the store in the background, one at a time
+  (luma-app-migrate.timer); a capsule is kept until its application has
+  started from the store once.
+- Requires ostree, debootstrap, debian-keyring, ubu-keyring, dnf5.
+- A refresh takes a newer build of the package itself from its repository
+  instead of rebuilding from the kept file; console programs get no desktop
+  baseline; 32-bit x86 Debian packages go through Valet into a tree with
+  both architectures; the hidden start has an X server of its own.
+- The device's settings-daemon schemas (without xsettings) are shown to
+  trees and capsules; GSettings of store applications are kept in a file.
+
 * Sat Nov 21 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.103
 - PipeWire: the access module is back in its default mode. 1.luma.101 named
   the sockets in module.access.args, which made every client on pipewire-0

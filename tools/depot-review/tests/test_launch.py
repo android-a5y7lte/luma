@@ -40,6 +40,62 @@ class Launch(unittest.TestCase):
         self.assertFalse(vm.window_verdict(0.35, 0.34))  # something else changed the screen
         self.assertFalse(vm.window_verdict(0.01, 0.0))   # nothing really appeared
 
+    def test_unit_state_probe(self):
+        self.assertEqual(vm.parse_unit_state(0, "active\n"), "active")
+        self.assertEqual(vm.parse_unit_state(3, "inactive\n"), "inactive")
+        self.assertEqual(vm.parse_unit_state(3, "failed"), "failed")
+        # A probe that timed out or lost SSH is not the app closing.
+        self.assertEqual(vm.parse_unit_state(124, ""), "unknown")
+        self.assertEqual(vm.parse_unit_state(255, ""), "unknown")
+        self.assertEqual(vm.parse_unit_state(1, "Failed to connect to bus: No medium found"), "unknown")
+
+    def test_control_app_decides_who_a_failed_launch_is_about(self):
+        self.assertEqual(vm.judge_launch(False), "infrastructure")  # the control failed too: the VM
+        self.assertEqual(vm.judge_launch(True), "app")              # the control opened a window
+        self.assertEqual(vm.judge_launch(None), "app")              # no control: the finding stands
+
+    def test_android_stays_off_in_the_review_vm(self):
+        self.assertIn("waydroid-container.service", vm.REVIEW_MASKS)
+        self.assertIn("luma-android-initialize.service", vm.REVIEW_MASKS)
+        self.assertIn("luma-android-prewarm.timer", vm.REVIEW_USER_MASKS)
+        run = vm.android_off()
+        self.assertIn("systemctl mask --runtime --now", run)
+        self.assertIn("systemctl --global mask --runtime luma-android-prewarm", run)
+        self.assertNotIn("--runtime", vm.android_off(runtime=False))
+
+    def test_prepare_base_refuses(self):
+        self.assertEqual(vm.prepare_refusal(False, "", False), "")
+        self.assertIn("already prepared", vm.prepare_refusal(True, "", False))
+        self.assertEqual(vm.prepare_refusal(True, "", True), "")
+        self.assertIn("open by other processes", vm.prepare_refusal(False, "794438", True))
+
+    def test_fresh_base_masks_android_from_the_first_boot(self):
+        ks = vm.kickstart("ssh-ed25519 AAAA test", "ttyS0")
+        self.assertIn("systemctl mask luma-android-initialize.service waydroid-container.service", ks)
+        self.assertIn("systemctl --global mask luma-android-prewarm.timer", ks)
+
+    def test_hung_first_run_ldconfig(self):
+        self.assertTrue(vm.stuck_in_ldconfig("flatpak\nbwrap\nbwrap\nldconfig\n"))
+        self.assertFalse(vm.stuck_in_ldconfig("flatpak\nbwrap\nearshot\n"))
+        self.assertFalse(vm.stuck_in_ldconfig("flatpak\nbwrap\nldconfig\nearshot\n"))
+        self.assertFalse(vm.stuck_in_ldconfig(""))
+
+    def test_emergency_mode_is_seen(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            serial = Path(folder) / "serial.log"
+            self.assertFalse(vm.in_emergency(serial))
+            serial.write_text("[ TIME ] Timed out waiting for device\nYou are in emergency mode. After")
+            self.assertTrue(vm.in_emergency(serial))
+
+    def test_qmp_socket_fits_af_unix(self):
+        short = Path("/srv/jobs/run-x")
+        self.assertEqual(vm.qmp_path(short), short / "qmp.sock")
+        deep = Path("/srv/dev-storage/depot-review/work/jobs/recheck-sub_va4DOdlqJIxg-20261122T123356/attempt-1/"
+                    "vm-x86_64/run-_zghsieq")
+        self.assertLess(len(str(vm.qmp_path(deep))), 108)
+        self.assertNotEqual(vm.qmp_path(deep), vm.qmp_path(deep.with_name("run-other")))
+
 
 if __name__ == "__main__":
     unittest.main()

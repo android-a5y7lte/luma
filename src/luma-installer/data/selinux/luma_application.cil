@@ -35,6 +35,17 @@
     (rangetransition process user_home_t dir ((s0) (s0)))
     (rangetransition process user_home_t file ((s0) (s0)))
     (rangetransition process user_home_t lnk_file ((s0) (s0)))
+    ; Music has a type of its own in the policy (audio_home_t, ~/Music): a
+    ; music player granted Music could see that it was there and not open it,
+    ; with no AVC (a dontaudit). The same rights as for the other folders; the
+    ; refusal stub, not the type, decides which folders an application may use.
+    ; Keys, keyrings and browser profiles keep their own types and stay refused.
+    (allow process audio_home_t (dir (getattr search open read ioctl lock watch create write add_name remove_name rename reparent rmdir setattr)))
+    (allow process audio_home_t (file (getattr open read write append create unlink rename link lock ioctl map setattr watch)))
+    (allow process audio_home_t (lnk_file (getattr read create unlink rename setattr)))
+    (rangetransition process audio_home_t dir ((s0) (s0)))
+    (rangetransition process audio_home_t file ((s0) (s0)))
+    (rangetransition process audio_home_t lnk_file ((s0) (s0)))
     ; Applications that sandbox their own work (ChatGPT's Codex and Claude's
     ; command runner use bubblewrap; browsers and Flatpak use namespaces too)
     ; build a private root inside the capsule's user namespace: a fresh tmpfs
@@ -47,4 +58,74 @@
     (allow process tmpfs_t (dir (getattr search open read write add_name remove_name create rmdir setattr mounton)))
     (allow process tmpfs_t (file (getattr open read write create unlink setattr mounton)))
     (allow process tmpfs_t (lnk_file (getattr read create unlink)))
+    ; -- The application store (ADR-052) --------------------------------------
+    ; An application from the store runs on its own tree: a read-only checkout
+    ; of hard links into the store, labelled container_ro_file_t (file
+    ; contexts below). This domain may already read and execute that type;
+    ; what follows is what a whole distribution root as "/" needs beyond it.
+    ;
+    ; Watching its own root. Browsers and Electron applications put inotify
+    ; watches on folders of their root ("/", /etc, /etc/xdg,
+    ; /usr/share/applications, /usr/local/share) to notice changes without
+    ; polling; each was denied as { watch } on a container_ro_file_t dir
+    ; (Slack, Chrome). Watching reads nothing the domain cannot already read.
+    ; Files, links, mount-wide and permission watches stay refused: nothing
+    ; asked for them.
+    (allow process container_ro_file_t (dir (watch)))
+    ; The device's time zone database is bound over the application's own so
+    ; that both agree on today's rules. Chromium-based applications watch
+    ; that folder for a change of zone ({ watch } on a locale_t dir, Zoom's
+    ; web view); the domain may already read it.
+    (allow process locale_t (dir (watch)))
+    ; Machine code an application generates for itself. Qt's QML engine
+    ; (Zoom) writes compiled code into an anonymous memory file of its own
+    ; ("memfd:JITCode:QtQml", tmpfs_t), maps it and makes the mapping
+    ; executable; that was denied as { execmod }, and with that allowed as
+    ; { execute }, on a tmpfs_t file, and Zoom died before its first window,
+    ; in a capsule and from the store alike.
+    ; The file has no name, exists only while the process holds it, and
+    ; nothing outside the application's sandbox can reach it. Container
+    ; domains may already make anonymous memory executable (execmem); this is
+    ; the same right for the file-backed form of the same thing.
+    (allow process tmpfs_t (file (execute execmod)))
+    ; fontconfig tries to refresh the font cache of the tree it runs on
+    ; ({ write } on a fontconfig cache folder of the tree, Mousepad, GTK 3)
+    ; and then uses its per-person cache in the private home. The tree is
+    ; read-only by design, so the attempt stays refused; it is only not
+    ; logged, so that a real denial on the tree is not lost among these.
+    ; Only adding an entry to a folder of the tree is silenced.
+    (dontaudit process container_ro_file_t (dir (write add_name)))
+    ; -- Folders an application may not use (ADR-052, Permissions 3) --------
+    ; Every folder of the home folder is at its real path in an application's
+    ; sandbox. One it may not use has an empty folder of this type mounted over
+    ; it (luma_installer.permission_views): the application sees that the
+    ; folder is there (getattr) and nothing else. Reading, entering or writing
+    ; it is refused with a permission error, and each refusal is an AVC that
+    ; luma-refusal-watch turns into one offer per application and folder. No
+    ; dontaudit: these denials are the signal. A grant mounts the real folder
+    ; over the stub in the same place, while the application runs.
+    (type refused)
+    (roletype object_r refused)
+    (typeattributeset file_type (refused))
+    (allow refused tmpfs_t (filesystem (associate)))
+    (allow process refused (dir (getattr)))
+    ; Container domains may search every folder; on this type a search would
+    ; turn a path into the folder into "no such file" instead of a refusal.
+    (deny process refused (dir (search)))
+    ;
+    ; -- Devices a granted device request names (ADR-052, Permissions 5) ----
+    ; The sandbox's /dev holds only the graphics nodes and the nodes of a
+    ; granted request (device_requests: HID and lighting controllers, USB
+    ; serial adapters, game controllers, USB devices by vendor), so these
+    ; rules reach nothing that was not granted. Without them a granted
+    ; controller was present and refused ({ read write } on usb_device_t).
+    (allow process usb_device_t (chr_file (getattr open read write ioctl lock)))
+    (allow process usbtty_device_t (chr_file (getattr open read write ioctl lock)))
+    (allow process event_device_t (chr_file (getattr open read write ioctl lock)))
 )
+; The store and its checkouts, per person. Without these a relabel of the home
+; folder (restorecon) would give every tree the type of ordinary data, and no
+; application could start from it. The repository's files are the checkouts'
+; files (hard links), so both carry the one type. Private data folders are
+; not listed: the launcher labels each with its application's categories.
+(filecon "HOME_DIR/\.local/share/luma/apps(/.*)?" any (system_u object_r container_ro_file_t ((s0) (s0))))

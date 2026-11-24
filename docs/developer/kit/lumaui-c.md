@@ -129,17 +129,101 @@ the header bar and other chrome keep their own size and the ratio holds for
 that widget alone; without it the whole window keeps the ratio. Either call
 may come before or after the window is shown.
 
-The compositor applies the ratio to every size it picks while the window
-floats, live while the person drags any edge or corner, and to sizes the app
-asks for. Maximizing makes the window the largest size with that ratio,
-centred. A window in a tile fills its tile and a fullscreen window fills the
-screen, so the content must still letterbox in any size.
+The compositor keeps the ratio wherever the window goes: live while the
+person drags any edge or corner, for sizes the app asks for, in tiles of
+every kind (the largest size with the ratio, centred in the tile, with the
+desktop showing around it) and when maximized (the same, in the maximize
+area). A tile smaller than the window's minimum size leaves the window at
+its minimum, at the tile's corner. Only fullscreen fills the screen, so the
+content still letterboxes there. An app's "free" shape mode removes the
+ratio, and the window fills its tile again.
 
 `luma_window_set_aspect_ratio()` returns `TRUE` when the compositor keeps
 the ratio; `luma_window_get_aspect_ratio_enforced()` asks without setting
 one. Elsewhere (another compositor, X11, macOS, Windows) the calls do nothing
 and return `FALSE`. Python reaches the same calls through introspection as
 `LumaUI.window_set_aspect_ratio()`.
+
+## Windows hidden from screen capture
+
+A window that would capture itself, such as a recorder's controls or a
+streaming app's preview, keeps itself out of screen captures (C API level
+11):
+
+```c
+luma_window_set_hidden_from_capture (window, TRUE);
+```
+
+Screen shares of a display or an area and screenshots of the screen show
+what is behind the window; it stays on the screen as usual, and its dialogs,
+menus and popovers are left out with it. Sharing the window itself still
+shows it, and the share picker marks its tile "Hidden from screen sharing".
+No permission is needed: hiding only removes content from captures. The call
+may come before or after the window is shown; `FALSE` shows the window in
+captures again.
+
+It returns `TRUE` when the compositor hides the window;
+`luma_window_get_capture_hiding_supported()` asks without setting anything.
+Elsewhere (another compositor, X11, macOS, Windows) it does nothing and
+returns `FALSE`. Python apps call `AppWindow.set_hidden_from_capture()`
+(`LUMAUI_API_LEVEL` 14). Xwayland apps that do not use LumaUI set the
+`_LUMA_WINDOW_HIDDEN_FROM_CAPTURE` CARDINAL property on their window to 1.
+See ADR-053.
+
+## Windows and documents that come back
+
+Every app's windows come back after a restart, a log-out or a crash, and
+continue on the person's other devices: the shell restores their place,
+state, order and focus. An app also gets its own state back by giving each
+window a key and saving what the window needs (C API level 12):
+
+```c
+static void
+save_window (LumaRestore *restore, GtkWindow *window, GVariantDict *state, gpointer data)
+{
+  luma_restore_add_document (state, document_uri (window), document_title (window),
+                             document_dirty (window), unsaved_text (window));
+  g_variant_dict_insert (state, "scroll", "d", scroll_position (window));
+}
+
+static void
+restore_window (LumaRestore *restore, const char *reason, const char *key,
+                GVariant *state, gpointer app)
+{
+  GtkWindow *window = open_window (app, state);
+  luma_window_set_restore_key (window, key);
+  gtk_window_present (window);
+}
+
+static void
+startup (GApplication *app)
+{
+  LumaRestore *restore = luma_restore_get_default (GTK_APPLICATION (app));
+  g_signal_connect (restore, "save-window", G_CALLBACK (save_window), NULL);
+  g_signal_connect (restore, "restore-window", G_CALLBACK (restore_window), app);
+}
+
+static void
+activate (GApplication *app)
+{
+  if (luma_restore_restore (luma_restore_get_default (GTK_APPLICATION (app))))
+    return;
+  open_window (app, NULL);
+}
+```
+
+Give every `GtkApplicationWindow` a key before it is first shown
+(`luma_window_set_restore_key (window, "main")`). `restore-window` comes once
+per saved window, in order; the shell places each re-created window where
+its key was. `save` and `restore` carry app-wide state. The reason is
+`restore` (same device), `continue` (from another device) or `recover`.
+Keep the state small: URIs, the view, and unsaved text. It goes only to the
+shell, which gives an app only its own state back, and travels to the
+person's other devices end-to-end encrypted. Python apps use
+`luma_appkit.restore.enable(app, open_window)` with `AppWindow.restore_key`,
+`save_state()`, `restore_state()` and `documents()` (`LUMAUI_API_LEVEL` 15).
+Without Luma's shell nothing is saved and `luma_restore_restore()` returns
+`FALSE`. See ADR-055.
 
 ## Where C differs from Python
 

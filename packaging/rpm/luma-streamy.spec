@@ -6,7 +6,7 @@
 
 Name:           luma-streamy
 Version:        0.1.0
-Release:        1.luma.9%{?dist}
+Release:        1.luma.22%{?dist}
 Summary:        Stream and record your screen, windows and camera
 # The app: Apache-2.0. gst-lumaframe: MPL-2.0. Vendored crates (Cargo.lock):
 # gstreamer-rs and glib-rs (MIT OR Apache-2.0, MIT), memchr (Unlicense OR
@@ -66,8 +66,13 @@ Requires:       gstreamer1-plugin-openh264
 Requires:       xdg-desktop-portal
 # Chat sockets and sign-in (Soup 3 through GObject introspection).
 Requires:       libsoup3
-# SRT destinations.
+# SRT destinations. Not on aarch64: Raspberry Pi 5 replaces bad-free and
+# bad-free-libs with its own build (rpm-ostree override), and Fedora's -extras
+# requires the libs of its own release, so a generic ARM image carrying it
+# cannot take the Pi override (card builds and Pi updates both fail).
+%ifnarch aarch64
 Recommends:     gstreamer1-plugins-bad-free-extras
+%endif
 
 %description
 Streamy puts displays, windows, cameras, images and sound together in scenes
@@ -109,7 +114,8 @@ found=$(find licenses/vendor -type f | wc -l)
 python3 -m py_compile %{buildroot}%{python3_sitelib}/luma_streamy/*.py
 desktop-file-validate %{buildroot}%{_datadir}/applications/org.projectluma.Streamy.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.projectluma.Streamy.metainfo.xml
-# Scene model, layouts and the pipeline graph.
+# Scene model, layouts, the pipeline graph, and the camera and sound device lists across a
+# service that goes away and comes back.
 PYTHONPATH=. python3 -B -m unittest discover -s tests -p 'test_*.py' -v
 # Headless GL: Mesa's EGL surfaceless platform on llvmpipe.
 export GST_GL_PLATFORM=egl GST_GL_WINDOW=surfaceless LIBGL_ALWAYS_SOFTWARE=1
@@ -128,6 +134,22 @@ PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 120 python3 -B tests/engine_fa
 # A microphone meters at once, also beside a source that failed; a frameless widget draws its Look.
 PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 120 python3 -B tests/engine_levels.py
 PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 120 python3 -B tests/engine_placeholder.py
+# Every capture kind and format reaches a picture, also reopened and beside an MJPEG camera.
+# Half-size displays: llvmpipe builders composite a 3440x1440 cast at a few frames a second.
+PYTHONPATH=%{buildroot}%{python3_sitelib} STREAMY_FORMATS_FAST=1 timeout 240 python3 -B tests/engine_formats.py
+PYTHONPATH=%{buildroot}%{python3_sitelib} STREAMY_FORMATS_BESIDE=1 STREAMY_FORMATS_ONLY=display \
+  timeout 120 python3 -B tests/engine_formats.py
+# A resize is composited on the next canvas frame, never behind an older picture.
+PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 120 python3 -B tests/engine_resize_frame.py
+# A recording and a stream row (FLV) carry the program's sound, also from an encoder that moves its
+# timestamps (vah264enc); skipped where no H.264 and AAC encoder is installed (no OpenH264 here).
+PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 300 python3 -B tests/engine_stream_sound.py
+# Every scene's sources stay open: a switch reopens nothing, a cut shows on the first output frame,
+# a fade reaches full alpha in its time and a picture in both scenes glides; a parked camera shows.
+PYTHONPATH=%{buildroot}%{python3_sitelib} STREAMY_FAKE_SOURCES=1 timeout 180 python3 -B tests/engine_scenes.py
+# Per-destination picture size and frame rate (a 60 fps feed recorded at 360p60 and its own size at
+# 30 fps) and a live bitrate change; skipped where no H.264 encoder or ffprobe is installed.
+PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 120 python3 -B tests/outputs_quality.py $PWD/quality-out
 # The installed app opens on drawn stand-in sources and renders its window
 # at phone and desktop widths. The first try waits 15 s: on a loaded builder
 # the window can take that long to map while llvmpipe composites the scene.
@@ -137,6 +159,9 @@ HOME=$PWD/check-home XDG_DATA_HOME=$PWD/check-home/data XDG_CONFIG_HOME=$PWD/che
   XDG_CACHE_HOME=$PWD/check-home/cache PYTHONPATH=%{buildroot}%{python3_sitelib} \
   timeout 150 xvfb-run -a -s "-screen 0 1920x1080x24" dbus-run-session -- \
   env GDK_BACKEND=x11 GSK_RENDERER=cairo python3 -B tests/window_actions.py
+# A preview leaving the program lets GTK's sink go on the main thread (elsewhere it aborts).
+PYTHONPATH=%{buildroot}%{python3_sitelib} timeout 120 xvfb-run -a -s "-screen 0 1920x1080x24" \
+  env GDK_BACKEND=x11 GSK_RENDERER=cairo python3 -B tests/engine_preview_teardown.py
 for width in 360 1280; do
   HOME=$PWD/check-home XDG_DATA_HOME=$PWD/check-home/data XDG_CONFIG_HOME=$PWD/check-home/config \
     XDG_CACHE_HOME=$PWD/check-home/cache STREAMY_FAKE_SOURCES=1 STREAMY_SHOT_DELAY=15000 STREAMY_SHOT_TRIES=120 \
@@ -167,6 +192,113 @@ gtk4-update-icon-cache --force --quiet %{_datadir}/icons/hicolor >/dev/null 2>&1
 %{_libdir}/gstreamer-1.0/libgstlumavideofx.so
 
 %changelog
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.22
+- Each destination sets what it sends: picture size (the canvas's own, 720p
+  or 480p), 30 or 60 fps, video bitrate and sound bitrate; the recording
+  also sets its codec. Defaults come from the platform. Rows with different
+  settings get their own encode; a smaller picture is scaled once per
+  encode, on the GPU before a VA encoder. Each encode paces itself to its
+  own frame rate, and a canvas's tap runs at its fastest encode's rate.
+- Automatic bitrate (on by default for streams): an encode steps its
+  bitrate down by a quarter while its rows fall behind (pictures waiting or
+  dropped for the network), to a quarter of the row's at most, and climbs
+  back slowly once they keep up. Rows sharing an encode follow the worst
+  connected one. The row reads "Live · 3.2 of 6 Mb/s"; Stats shows it,
+  seconds waiting and stalls. Every step is logged.
+- A live stream whose bytes stop going out for 10 s is torn down and
+  reconnected, instead of waiting for the server to drop it.
+- While live, bitrate and automatic bitrate change at once on a row's own
+  encode; picture size, frame rate and sound apply on the next Go live, as
+  the editor says.
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.21
+- A widget added to a running canvas (a scene, the other canvas turned on)
+  never stops its source: its layer is fed only once it runs, and a redrawn
+  picture reaches it only after its stream's caps.
+- Scene changes keep time with the compositor when it runs late: a switch
+  starts once every picture of the new scene is in the compositor, and fades
+  and glides follow the frames it actually makes.
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.20
+- Streams carry sound again: vah264enc puts its output 1000 hours above
+  its input, and every stream row dropped all of the encode's sound as
+  before its first picture. Encoded samples now go back on their input's
+  timeline.
+- A row starts with the sound its encode put out since its first picture
+  went in: behind a slow encoder, recordings and streams began seconds
+  late on sound.
+- Dropped sound is logged (rate-limited), with each encode's and row's
+  first sound offset; STREAMY_ROW_DUMP=<dir> writes what a stream row
+  sends.
+- A screen lock no longer stops the program while a destination is live
+  (the server closed the connection and the reconnect waited for good).
+- An encode's timestamps carry on across a program restart.
+- Encodes keep 30 fps whatever rate a canvas hands over (60 fps doubled
+  every bitrate).
+- The Recording row records whenever Go live starts; End stream ends that
+  recording. No Add widget in the action bar.
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.19
+- Every scene's sources stay open: a scene switch reopens nothing and shows
+  no "Connecting" card. A source no shown scene uses is parked (a camera's
+  pictures are dropped before decoding, a screen passes one a second).
+- Scene transitions: Fade (300 ms by default) or Cut, set with nothing
+  selected in the Inspector. Keyframed on the program clock, so streams and
+  recordings fade too; a picture in both scenes glides to its new place.
+- Linked widgets: Paste (Ctrl+V) links a widget into another scene, sharing
+  its source, name and sound while its place and Look stay its own. Paste as
+  new widget, Unlink from other scenes; a link icon marks shared widgets.
+- Duplicate scene links its widgets; older projects link identical sources.
+- The canvas ⋯ menu opens again.
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.18
+- Go live appears and goes the moment a stream destination is turned on or
+  off, added or removed (the bar followed only the next other event).
+- X as a destination: its ingest server and a stream key from Media Studio
+  Producer, with X's own logo.
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.17
+- A camera reopens on its new node while the session is locked (it asks
+  nothing, and a lock doesn't pause it); after a camera service restart a
+  camera that fails or sends nothing is opened again, up to six times in
+  30 s; cameras open at start while locked
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.15
+- The camera list is read again when wireplumber@video-capture, the
+  WirePlumber instance that hosts the camera monitors, restarts
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.14
+- Cameras and microphones follow PipeWire and WirePlumber restarts: the camera
+  list is read again on a fresh portal connection when its connection closes,
+  never lists, the service restarts, a camera stream ends or a chosen camera
+  is missing; a device is unplugged only once a fresh list agrees; a camera
+  on a new node reopens by itself, a microphone that came back is listened to
+  again
+- MJPEG cameras decode on the GPU with vajpegdec (rank none, so decodebin
+  never chose it); a GPU-decoded camera that sends but shows nothing in 8 s
+  decodes in software
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.13
+- A preview leaving the program (a canvas hidden, the program closing) lets
+  GTK's paintable sink go on the main thread; dropped on the close thread it
+  aborted the app as it quit
+
+* Sun Nov 22 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.12
+- Quitting waits for the program and every pending stop to reach NULL, so
+  no GL thread is mid-teardown when the process exits (exit segfaults)
+- Every program pipeline in a process shares one GL display; an old
+  program's eglTerminate no longer breaks the next one
+
+* Sat Nov 21 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.11
+- aarch64: no gstreamer1-plugins-bad-free-extras recommendation; it conflicts
+  with the Raspberry Pi 5 bad-free override
+
+* Sat Nov 21 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.10
+- Hide Streamy from screen capture (app menu, on by default): Streamy's
+  windows stay out of display widgets and screen shares through
+  AppWindow.set_hidden_from_capture(), so a display widget of Streamy's own
+  display shows no copies of Streamy. No effect on platforms without it.
+
 * Fri Nov 20 2026 Project Luma <maintainers@projectluma.org> - 0.1.0-1.luma.9
 - Outputs: one encode per canvas and quality, teed to RTMP(S), SRT, WHIP and
   recording rows, each reconnecting on its own; Destinations, Stats and Chat

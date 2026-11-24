@@ -57,6 +57,22 @@ class Config:
     publish_catalog4: bool = True
     max_upload_bytes: int = 4 * 1024 ** 3
     vm_arches: list = field(default_factory=lambda: ["x86_64"])
+    # The review VM's lane on the shared build server (the luma-heavy conform-lane
+    # pattern: one review VM beside one build). It boots only with vm_memory_mib
+    # plus vm_reserve_mib available and luma-heavy.slice not frozen.
+    vm_lock: str = "/var/lock/luma-heavy-review.lock"
+    vm_memory_mib: int = 6144
+    vm_cpus: int = 4
+    vm_reserve_mib: int = 4096
+    vm_slot_wait_seconds: int = 2700
+    # Seconds between attempts when Depot's own checks couldn't run (VM boot,
+    # screen, host capacity); after the last one the report is couldnt_run.
+    infra_retry_delays: list = field(default_factory=lambda: [300, 900, 2700])
+    # A known-good app on the Luma runtime (Depot Hello, testapp/build.sh). When a
+    # submitted app doesn't launch, it runs on the same VM; if it fails too, the
+    # VM is at fault and the result is couldnt_run, not a finding.
+    control_bundle: Path = Path("/srv/dev-storage/depot-review/testapp/depot-hello-1.1-x86_64.flatpak")
+    control_app_id: str = "io.github.nmcmil.DepotHello"
 
     @classmethod
     def load(cls, path: str | None = None) -> "Config":

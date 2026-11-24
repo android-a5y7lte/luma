@@ -12,7 +12,8 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from . import capsule_display, capsule_identity, capsule_refresh, capsule_scope, capsule_secrets
+from . import capsule_display, capsule_identity, capsule_refresh, capsule_scope, capsule_secrets, sandbox_permissions
+from . import sandbox_seccomp, session_boundary
 from . import capsule_runtime as runtime_policy
 from . import launch_guard
 from .desktop import read_record, safe_id
@@ -48,16 +49,9 @@ class _BusBoundary:
             path.unlink(missing_ok=True)
 
 
-# Sound, as (the session's socket, where the application finds it).
-#
-# PipeWire's own socket lets a client do anything: record the microphone, read
-# a screen being shared, rewire other applications' sound. An application gets
-# the socket the session keeps for applications instead, on which it can only
-# play (data/pipewire/60-luma-application-socket.conf); cameras and screens
-# reach it through the portal. In a session that has no such socket yet it
-# gets none, and sound still works through the PulseAudio socket, which every
-# application made before PipeWire uses anyway.
-SOUND_SOCKETS = (("pipewire-0-application", "pipewire-0"), ("pulse/native", "pulse/native"))
+# What an application gets of the session is decided in session_boundary.py,
+# for capsules and for applications from the store alike.
+SOUND_SOCKETS = session_boundary.SOUND_SOCKETS
 
 # What an application may ask of the accessibility bus: to put its own window
 # tree under the desktop's and to learn which events and keys assistive tools
@@ -329,40 +323,25 @@ def _launch_deb(record: dict[str, object], extra: list[str] | None = None) -> in
                  "--env", "BROWSER=/usr/bin/xdg-open",
                  "--env", "GTK_USE_PORTAL=1",
                  "--env", f"LUMA_CAPSULE_DESKTOP_ID={_desktop_id(record)}"]
+    schemas = session_boundary.desktop_schemas()
+    if schemas is not None:
+        # The desktop's settings schemas, for an application that asks for them (session_boundary.py).
+        arguments.extend(("--volume", f"{schemas}:{session_boundary.SCHEMAS_INSIDE}:ro",
+                          "--env", f"XDG_DATA_DIRS={session_boundary.SCHEMA_DATA_DIRS}"))
     # A console payload needs a terminal on both sides of the capsule boundary:
     # without one it reads EOF immediately and exits before drawing anything.
     if record.get("terminal") and sys.stdin.isatty() and sys.stdout.isatty():
         arguments.extend(("--interactive", "--tty"))
         if os.environ.get("TERM"):
             arguments.extend(("--env", f"TERM={os.environ['TERM']}"))
+    # Wayland, sound, the filtered buses and the application's own X socket:
+    # the same for every way an application runs (session_boundary.py).
     wayland = os.environ.get("WAYLAND_DISPLAY")
-    if wayland:
-        _socket_mount(arguments, runtime / wayland, capsule_runtime / wayland)
-        arguments.extend(("--env", f"WAYLAND_DISPLAY={wayland}", "--env", f"XDG_RUNTIME_DIR={capsule_runtime}"))
-    for source, relative in SOUND_SOCKETS:
-        _socket_mount(arguments, runtime / source, capsule_runtime / relative)
-    # The accessibility bus alongside sound and video, filtered: a11y clients
-    # read its address from the session bus and find it at this exact path, so
-    # a capsule without it tells every toolkit the desktop has no accessibility.
-    if proxy is not None and proxy.accessibility is not None:
-        _socket_mount(arguments, proxy.accessibility, capsule_runtime / "at-spi/bus")
-        arguments.extend(("--env", f"AT_SPI_BUS_ADDRESS=unix:path={capsule_runtime / 'at-spi/bus'}"))
-    # The mount point for the sound socket is created by the container runtime
-    # and owned by root. PulseAudio clients refuse a runtime directory they do
-    # not own and never connect: no microphone, and no sound, in any capsule.
-    # Name the socket directly, as Flatpak does.
-    if (runtime / "pulse/native").exists():
-        arguments.extend(("--env", f"PULSE_SERVER=unix:{capsule_runtime / 'pulse/native'}"))
-    if bus_socket is not None:
-        capsule_bus = capsule_runtime / bus_socket.name
-        _socket_mount(arguments, bus_socket, capsule_bus)
-        arguments.extend(("--env", f"DBUS_SESSION_BUS_ADDRESS=unix:path={capsule_bus}"))
-    # X, for an application that still needs it: a socket of its own that the
-    # launcher answers, and never the session's cookie.
     display = _start_display(runtime, str(record["sha256"]))
-    if display is not None:
-        arguments.extend(("--volume", f"{display.path}:{capsule_display.SOCKETS}/X{capsule_display.NUMBER}:rw",
-                          "--env", f"DISPLAY=:{capsule_display.NUMBER}"))
+    session = session_boundary.view(runtime, capsule_runtime, dict(os.environ),
+                                    accessibility=proxy.accessibility if proxy is not None else None,
+                                    bus_socket=bus_socket, display=display)
+    arguments.extend(session.podman())
     if Path("/dev/dri").exists():
         arguments.extend(("--device", "/dev/dri"))
     # The private home appears at the person's real home path, so paths mean the
@@ -371,8 +350,22 @@ def _launch_deb(record: dict[str, object], extra: list[str] | None = None) -> in
     home = Path.home().resolve()
     arguments.extend(("--volume", f"{data}:{home}:rw,Z", "--volume", f"{data}:/home/luma:rw",
                       "--env", f"HOME={home}", "--workdir", str(home)))
-    for folder in _person_folders():
-        arguments.extend(("--volume", f"{folder}:{folder}:rw"))
+    # The person's folders (sandbox_permissions): granted ones real, the rest refusal stubs, at
+    # their real paths; podman's own namespace keeps them, so a grant reaches a running capsule.
+    access = sandbox_permissions.for_start(str(record.get("application_id") or record["sha256"]), record,
+                                           backend="podman", instance=instance)
+    propagation = "rslave" if access.view is not None else "rw"
+    for source, destination in access.binds if access.binds is not None else [(str(f), str(f)) for f in _person_folders()]:
+        arguments.extend(("--volume", f"{source}:{destination}:{propagation}"))
+    if not access.network:
+        arguments[arguments.index("--network=host")] = "--network=none"
+    for node in access.devices:
+        arguments.extend(("--device", node))
+    # No document portal view for a capsule: the portal's FUSE mount refuses podman's user
+    # namespace, and crun then fails the whole start ("cannot stat /proc/self/fd/N").
+    # A capsule's bus proxy is outside the application's scope, so the portal treats it as
+    # the host and answers with real paths, which its folder view already covers.
+    arguments.extend(session_boundary.native_messaging(access.app, capsule_runtime, podman=True))
     # The desktop's identity tells toolkits which keyring, theme and portal
     # conventions apply; Chromium without it stores sign-ins in plain text and
     # forgets them, and GTK and Qt pick fallback themes.
@@ -399,6 +392,7 @@ def _launch_deb(record: dict[str, object], extra: list[str] | None = None) -> in
     try:
         status = _guarded(record, arguments, watched=True) if watched else _guarded(record, arguments)
     finally:
+        access.close()
         _stop_bus_proxy(proxy, bus_socket)
         if display is not None:
             display.stop()
@@ -453,6 +447,19 @@ def _scoped(record: dict[str, object]) -> bool:
 def _scope(record: dict[str, object]) -> list[str]:
     """In front of bubblewrap: the scope, inherited by everything it starts."""
     return capsule_scope.prefix() if _scoped(record) else []
+
+
+def _confinement(record: dict[str, object]) -> tuple[list[str], list[str]]:
+    """For an application under bubblewrap: what goes in front of it, and its own options.
+
+    The Landlock scope and the system-call filter (sandbox_seccomp.py). A
+    record can opt out of the filter with "seccomp": false, for an application
+    that turns out to need a call or a socket family it refuses.
+    """
+    scoped = _scoped(record)
+    filtered = record.get("seccomp") is not False and bool(sandbox_seccomp.program())
+    front = capsule_scope.prefix(abstract=scoped, signal=scoped, seccomp=filtered)
+    return front, (capsule_scope.seccomp_arguments() if filtered and front else [])
 
 
 def _runtime_arguments(record: dict[str, object]) -> list[str]:
@@ -587,8 +594,9 @@ def _launch_appimage(record: dict[str, object], extra: list[str] | None = None) 
     data = _private_home(record)
     proxy, bus_socket = _start_bus_proxy(runtime, str(record["sha256"]), runtime_policy.own_bus_arguments(record),
                                          record)
+    front, filter_options = _confinement(record)
     arguments = [
-        *_scope(record),
+        *front,
         "bwrap", "--die-with-parent", "--new-session", "--unshare-all", "--share-net",
         "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc", "--ro-bind", "/sys", "/sys",
         "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
@@ -598,35 +606,36 @@ def _launch_appimage(record: dict[str, object], extra: list[str] | None = None) 
         "--dir", "/run", "--dir", "/run/user", "--dir", str(capsule_runtime),
         "--dir", str(capsule_runtime / "pulse"), "--dir", str(capsule_runtime / "at-spi"),
     ]
-    for folder in _person_folders():
-        arguments.extend(("--bind", str(folder), str(folder)))
+    access = sandbox_permissions.for_start(str(record.get("application_id") or record["sha256"]), record)
+    for source, destination in access.binds if access.binds is not None else [(str(f), str(f)) for f in _person_folders()]:
+        arguments.extend(("--bind", source, destination))
+    if not access.network:
+        arguments[arguments.index("--share-net")] = "--unshare-net"
+    for node in access.devices:
+        arguments.extend(("--dev-bind", node, node))
+    arguments.extend(session_boundary.document_portal(access.app, capsule_runtime))
+    arguments.extend(session_boundary.native_messaging(access.app, capsule_runtime))
+    # The keeper's namespaces are joined before the Landlock scope, which forbids
+    # reaching a process outside it.
+    arguments[0:0] = [*access.gate, *access.nsenter]
     if Path("/dev/dri").exists():
         arguments.extend(("--dir", "/dev/dri", "--dev-bind", "/dev/dri", "/dev/dri"))
+    # Wayland, sound, the filtered buses and the application's own X socket:
+    # the same for every way an application runs (session_boundary.py).
     wayland = os.environ.get("WAYLAND_DISPLAY")
-    if wayland and (runtime / wayland).exists():
-        arguments.extend(("--ro-bind", str(runtime / wayland), str(capsule_runtime / wayland)))
-    # The accessibility bus belongs in the capsule with sound and video: the
-    # address a toolkit reads from the session bus names this exact path, and
-    # without it every application starts by reporting that this desktop has
-    # no accessibility (screen reader, magnifier, and every assistive tool).
-    for source, relative in SOUND_SOCKETS:
-        path = runtime / source
-        if path.exists():
-            arguments.extend(("--ro-bind", str(path), str(capsule_runtime / relative)))
-    accessibility = proxy.accessibility if proxy is not None else None
-    if accessibility is not None and accessibility.exists():
-        # Filtered, like the session bus: its own tree and nobody else's.
-        arguments.extend(("--ro-bind", str(accessibility), str(capsule_runtime / "at-spi/bus")))
-    if bus_socket is not None:
-        arguments.extend(("--bind", str(bus_socket), str(capsule_runtime / bus_socket.name)))
     display = _start_display(runtime, str(record["sha256"]))
+    session = session_boundary.view(runtime, capsule_runtime, dict(os.environ),
+                                    accessibility=proxy.accessibility if proxy is not None else None,
+                                    bus_socket=bus_socket, display=display)
     if display is not None:
-        arguments.extend(("--dir", str(capsule_display.SOCKETS), "--bind", str(display.path),
-                          f"{capsule_display.SOCKETS}/X{capsule_display.NUMBER}"))
-    payload = runtime_policy.payload_arguments(record, bool(wayland))
+        arguments.extend(("--dir", str(capsule_display.SOCKETS)))
+    arguments.extend(session.bubblewrap())
+    arguments.extend(filter_options)
+    payload = runtime_policy.payload_arguments(record, session.wayland)
     arguments.extend(("--chdir", "/app", "--", str(record["command"]), *payload, *(extra or [])))
     environment = {
-        **os.environ, "HOME": str(Path.home().resolve()), "XDG_RUNTIME_DIR": str(capsule_runtime), "PATH": "/usr/bin:/bin",
+        **session_boundary.cleaned(dict(os.environ)), **session.environment,
+        "HOME": str(Path.home().resolve()), "PATH": "/usr/bin:/bin",
         "LUMA_CAPSULE_DESKTOP_ID": _desktop_id(record),
         # The desktop's font, text scale, theme and colour scheme reach the
         # sandbox through the settings portal, as they do for an application in
@@ -641,21 +650,10 @@ def _launch_appimage(record: dict[str, object], extra: list[str] | None = None) 
         # "$APPDIR/usr/bin/" and failed (PrusaSlicer: Is a directory).
         environment.update({"APPIMAGE": "/app/AppRun", "APPDIR": "/app", "ARGV0": "/app/AppRun",
                             "OWD": str(Path.home().resolve())})
-    if (runtime / "pulse/native").exists():
-        environment["PULSE_SERVER"] = f"unix:{capsule_runtime / 'pulse/native'}"
-    if bus_socket is not None:
-        environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={capsule_runtime / bus_socket.name}"
-    environment.pop("AT_SPI_BUS_ADDRESS", None)
-    if accessibility is not None and accessibility.exists():
-        environment["AT_SPI_BUS_ADDRESS"] = f"unix:path={capsule_runtime / 'at-spi/bus'}"
-    # The session's own display and cookie stay outside.
-    environment.pop("XAUTHORITY", None)
-    environment.pop("DISPLAY", None)
-    if display is not None:
-        environment["DISPLAY"] = f":{capsule_display.NUMBER}"
     try:
         return _guarded(record, arguments, environment)
     finally:
+        access.close()
         _stop_bus_proxy(proxy, bus_socket)
         if display is not None:
             display.stop()
@@ -690,6 +688,19 @@ def main(argv: list[str] | None = None) -> int:
             # Its category pair and what it may still find in the keyring are
             # settled once, before anything else rewrites the record.
             record = capsule_identity.keyring_adoption(capsule_identity.ensure_level(record))[0]
+        waiting = record.get("migration")
+        if record.get("store") or (isinstance(waiting, dict) and waiting.get("state") == "ready"):
+            # An application in the application store, or one whose tree there
+            # has been tried and waits for it to be closed.
+            from . import closure_launcher, store_refresh
+            record = store_refresh.before_start(record)
+            if record.get("store"):
+                try:
+                    from .backends import adopt_own_schemes
+                    record = adopt_own_schemes(record)
+                except (InstallerError, OSError):
+                    pass
+                return closure_launcher.launch_record(record, extra)
         if capsule_refresh.state(record).get("pending_image"):
             # A refreshed capsule waits until the application is closed. If
             # it is closed now, this start is the first on the new one.

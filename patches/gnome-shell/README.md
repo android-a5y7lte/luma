@@ -866,3 +866,64 @@ that arrived (`receive()`); a breath in flight is not restarted and an
 interrupted series finishes the breaths left. Tests:
 `tests/gnome-shell/notification-breaths-policy.js` (in `%check`),
 `tests/gnome-shell/idle-cost`. Shell .193.
+
+`0393-layer-shell-surfaces.patch`: layer-shell surfaces (Mutter 0043-0045) in the Shell, `js/ui/lumaLayerShell.js` and its pure model `js/ui/lumaLayerShellModel.js`. The compositor's layer overlay group goes right above `global.window_group` in `uiGroup`: overlay surfaces cover every window, full-screen ones included, and stay under everything the Shell draws (panel and shelf, notifications, Quick Options, on-screen displays, the screen-share picker, portal and polkit dialogs, the end-session dialog, the lock screen); it is hidden with the windows in the overview. While the screen shield is up `set_layer_surfaces_hidden(true)`: no layer surface is shown, gets input or holds the keyboard. Grants are read from the permission store (table `luma`, entry `display-over-apps`; row tokens `overlay` granted, `-overlay` refused, `used-overlay@T` last used, `asked-overlay@T` offered, likewise `background`, `panel`, `keyboard`) before any app connects, pushed with `set_layer_shell_grants()` and followed through the store's `Changed` signal. A surface Mutter fades gets a name tag the Shell draws (design-center 858103d, `mockups/overlay-perms/faded.html`): a 26 px pill 6 px above the surface's top-left corner, or inside it inset 6 px with no room above, with the app's 16 px icon and name (Figtree 12/650), on rgba(18, 19, 22, 0.86) with a 12 px background blur and a 1.5 px ring in the LumaUI `overlay` colour (`config/shared/design-tokens.json`, written into `lumaLayerShellTokens.js` in `%prep`), stacked right above the overlays. `org.projectluma.LayerShell1` at `/org/projectluma/LayerShell` on the Shell's bus name: properties `Surfaces` `a(ssuubbt)`, `OverlayApps` `as`, `FadedApps` `as`, `Apps` `a{sa{sv}}` (granted, refused, used, last_used, asked); methods `SetCapability(s app, u capability, b allowed)` and `Stop(s app)` (unmaps the app's overlays for the session, grants unchanged); signals `Clamped(s app, u capability, b offer)` and `Used(s app, u capability)`. The status indicator and the offer here are unstyled placeholders on that interface (Allow, Not now, dismissing counts as Not now, offered once per app and capability); their design is built on top. Test: `tests/gnome-shell/layer-shell-policy.js` (in `%check`). Shell .203.
+
+`0382-share-picker-marks-windows-hidden-from-capture.patch`: a window that
+keeps itself out of screen captures (`Meta.Window:hidden-from-capture`,
+Mutter 0042, ADR-053) is marked on its window tile with an eye-off chip,
+"Hidden from screen sharing", which follows the property live and joins the
+tile's accessible name; sharing that window still shows it. Screen tiles
+leave such windows out of their clones, so a screen preview shows what the
+screen share will. Tests: `tests/mutter/window-capture`. Shell .197.
+
+`0385-notification-lip-ink-on-the-phone.patch`: the phone presentation
+paints the notification lip in the Dock's dark palette in every appearance
+mode (`src/luma-shell-presentation/presentation.css`) and turns the lip's
+material off, but the binding kept the appearance mode's classes on it: in
+Light the lip carried `luma-surface-light` and its text, source line, time
+and buttons took dark ink on the dark surface.
+`SurfaceMaterialBinding.setClassTreatment()` lets a host that paints a
+surface's fill itself name the treatment of that fill (null follows the
+mode again); the lip names `dark` while the presentation is `mobile`.
+Desktop and TV are unchanged. Shell .198.
+
+`0386-notification-lip-card-measured-at-its-width.patch`: the lip
+measured its card at the lip's width, but the card sits inside the
+surface's border (a 1 px rim at each side on the phone), 2 px narrower. A
+body that fit one line at the measured width wrapped in the card, the lip
+kept the one-line height, and its clipped surface cut off the actions. The
+card is measured at the surface's content box. Shell .199.
+
+`0387-icon-mask-cuts-in-actor-pixels.patch`: LumaIconMask measured its
+corner in the offscreen texture's coordinates, and that texture is the
+actor's enlarged paint volume (37 px for a 34 px notification tile), so
+the corner was cut 1.5 px outside the icon around a larger circle and
+the art's own corner showed instead. The mask maps texture coordinates
+back to the actor's pixels, the mapping LumaRoundedClip already used
+(now shared), with the radius a fraction of the actor's shorter side.
+Notification tiles, dock icons and the shelf's media and status icons
+take the corner they ask for. Shell .200.
+
+`0388-notification-lip-card-keeps-the-rim-pixel.patch`: the lip was as
+tall as its card, and the surface's 1 px bottom rim sat inside that
+height, so the card was laid out a pixel short and the clip took the
+pixel from its actions (a 120 px card in 119, 30 px buttons in 29). The
+card and tray take the surface's own measure, rim included; the pill
+keeps its height. Shell .200.
+
+`0389-app-icon-plate-fills-the-tile.patch`: the LumaUI app-icon plate.
+A v4 app icon draws its plate as a rounded square, 860 on its 1024
+canvas; at a tile's size that plate was 84% of the tile. `js/ui/lumaAppIconPlate.js`
+reads an icon's SVG once per path and modification time: when its first
+drawn element is a rounded square centred on a square canvas, the icon's
+texture is rendered at least that large and the icon is scaled about its
+centre so the square meets the tile's edges exactly; the tile's clip takes
+the margin. A raster, legacy,
+third-party or unreadable icon is drawn at the tile's size on a plate the
+Shell draws behind it (`.luma-app-icon-plate`), never cropped. Used through
+`iconMask.js` `syncAppIconPlate` by the notification tile (its art now one
+clipped, masked actor) and the app badge (a ring around a 16 px clip).
+Test: `tests/gnome-shell/app-icon-plate.js` (in `%check`). Shell .201.
+
+`0392-session-snapshots-and-restore.patch`: the session survives log-out, restarts and crashes (ADR-055). `lumaSession.js` snapshots every application window in stacking order (app, key, monitor with vendor/product/serial, workspace, frame and floating rectangles absolute and as a share of the work area, state, minimized, above, focus, LumaUI app state) on lock, suspend (sleep delay inhibitor, 2 s), lid close, log-out (the end-session dialog, after which nothing more is written), shutdown (logind `PrepareForShutdown`) and at most once a minute while windows change, into `$XDG_STATE_HOME/luma/session/current.json` (0600). At login the last snapshot is restored once (`org.projectluma.session` `reopen-windows`, `excluded-apps`): apps start, each window is placed in its first configure (Mutter 0048) by its LumaUI key, toplevel tag, title or order, apps that don't reopen their own windows get `open_new_window` until their count is reached, and once every window has drawn the stack is ordered bottom-up, the workspace switched and the saved window focused. Another monitor layout maps windows by monitor identity, then built-in, then position relative to the primary, keeping each window's share of the work area. `org.projectluma.Session1` (`org.projectluma.Session`): `TakeRestore`, `SetWindowKey`, `SaveState`/`SaveRequested` for apps (a caller's Flatpak or app scope must match the app it names), `Snapshot`, `GetSnapshot`, `Restore` for unsandboxed callers (Connect Sync's Continue). Tested by `tests/gnome-shell/session-restore/run.sh` (three headless Shell runs over one home: save, restore at login, remap to another monitor). Shell .202.

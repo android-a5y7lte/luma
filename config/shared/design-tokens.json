@@ -2094,5 +2094,9 @@
         "island_shade": "rgba(0, 0, 0, 0)"
       }
     }
+  },
+  "overlay": {
+    "_doc": "An app drawing over Luma (layer-shell overlays): the compositor's name tag on a faded overlay and every overlay indicator. Violet means this and nothing else. Design: design-center 858103d, mockups/overlay-perms/perms.css --ov, oklch(0.72 0.14 300).",
+    "color": "#b28fef"
   }
 }
