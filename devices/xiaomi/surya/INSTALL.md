@@ -1,9 +1,37 @@
 # Xiaomi POCO X3 NFC (surya)
 
 **Experimental bring-up.** No Luma image for this phone has been published or
-qualified. These steps are for the maintainer and other porters testing builds
-from the `surya` branch of a Luma fork. Nothing here is offered to people who
+qualified. These steps are for the maintainer and other porters, who build
+the images themselves (see "Building"). Nothing here is offered to people who
 did not go looking for it.
+
+The kernel is sm7150-mainline's (`scripts/mobile/surya/build-kernel.sh`), plus
+the surya changes in `scripts/mobile/surya/kernel-patches/`, until the
+`sm7150` family branch exists in SimplyLuma/linux and carries them; the
+`[kernel] tag` in `device.toml` names the release that will.
+
+## Building
+
+On an aarch64 machine (or with `ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-`):
+
+```sh
+scripts/mobile/surya/build-u-boot.sh out/u-boot
+scripts/mobile/surya/build-kernel.sh out/kernel
+scripts/mobile/surya/build-debug-initramfs.sh out/kernel out/initramfs.cpio.gz
+for mode in debug nbd nbd-safe; do
+  scripts/mobile/surya/build-boot-image.sh out/kernel out/initramfs.cpio.gz \
+    out/luma-surya-$mode-huaxing.img huaxing $mode
+done
+```
+
+`debug` is stage 1 below; `nbd` and `nbd-safe` are the stage 2 images
+(`nbd-safe` keeps the remote processor drivers from auto-loading, which is
+what the Wi-Fi/sound service expects). The stage 2 root is Luma's generic
+phone userdata image, `scripts/mobile/build-phone-userdata.sh --repo REPO
+--ref luma/1/aarch64/nightly --output luma-phone-userdata.simg --size 24G`
+from a pull of `https://dl.simplyluma.com/os/repo`, zstd-compressed, and
+`out/kernel`'s `modules-*.tar.zst`. The file names below are the ones the
+maintainer's builds use.
 
 This profile targets the POCO X3 NFC (`surya`, M2007J20CG) with the **Huaxing**
 display panel. The POCO X3 (`karna`, India) and phones with the Tianma panel
@@ -40,23 +68,28 @@ The speaker is silent with 24-bit audio, so a WirePlumber rule makes PipeWire
 use 16-bit (`S16LE`).
 
 Double tap to wake works (tested 2026-11-23) with the kernel patch in
-`scripts/mobile/surya/kernel-patches/`: the one-minute Wi-Fi/sound service then
-sets `nt36xxx_spi_ts.wake_gesture` and `panel_huaxing_nt36672c.stay_powered`, so
+`scripts/mobile/surya/kernel-patches/`: the one-minute Wi-Fi/sound service sets
+`nt36xxx_spi_ts.wake_gesture` and `panel_huaxing_nt36672c.stay_powered`, so
 screen-off keeps the panel powered and the touch controller in gesture mode.
-Setting them early in boot (a separate boot service) sent the phone back to
-fastboot; the cause is not known yet.
+Write N to both to turn it off (a little less standby power).
 
-Suspend is masked: with the root served over USB, suspending (the login
-screen does it after a few idle minutes) drops the USB link and the root,
-and the phone resets.
-Write N to both to turn it off (a little less standby power). The
-microphone and earpiece do not work in mainline yet.
+Also working (tested 2026-11-23/24 on the Alpha 1 base): GPU acceleration
+(Adreno 618 with `qcom/a630_sqe.fw` and `qcom/a630_gmu.bin`), vibration
+(AW8624 through feedbackd), Bluetooth (pairs and connects; its address is a
+placeholder until the board's is read), battery and charger reporting.
 
-Not yet: starting the compute DSP, video or camera
-resets the phone, so the "safe" image keeps their modules from loading; the
-Adreno 618 had no GMU firmware (`qcom/a630_gmu.bin`; the A618 entry of a6xx_catalog.c names it), so drawing is done by
-the CPU; Bluetooth lacks `qca/crbtfw01.tlv`; microphone/earpiece audio and
-cameras are not supported by mainline yet (postmarketOS reports the same).
+Boot needs `fw_devlink.sync_state=strict` (in `boot.toml`): with the default
+timeout the boot-time interconnect and power votes drop about 30 s in, before
+the modem, ADSP and camera consumers have probed, the display stops
+(`vblank wait timed out`) and the phone resets. Suspend is masked: with the
+root served over USB, suspending (the login screen does it after a few idle
+minutes) drops the USB link and the root, and the phone resets.
+
+Not yet: starting the compute DSP; microphone and earpiece (not in mainline);
+cameras. A bring-up scan (`luma-camprobe`, kernel-patches/0002) powers the
+five camera modules as the vendor DT does and finds their EEPROMs, the main
+module's AF driver and one sensor at 0x38 on CCI1, but the other four image
+sensors do not answer yet.
 
 ## Before you start
 
