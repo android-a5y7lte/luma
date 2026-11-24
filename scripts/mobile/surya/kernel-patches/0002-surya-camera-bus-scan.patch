@@ -84,10 +84,10 @@ index ee30edc..0e303c1 100644
 +obj-$(CONFIG_VIDEO_LUMA_CAMPROBE) += luma-camprobe.o
 diff --git a/drivers/media/i2c/luma-camprobe.c b/drivers/media/i2c/luma-camprobe.c
 new file mode 100644
-index 0000000..ffcedc6
+index 0000000..b549a1d
 --- /dev/null
 +++ b/drivers/media/i2c/luma-camprobe.c
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,210 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Camera bring-up probe for boards whose sensors have no driver yet: power
@@ -158,6 +158,13 @@ index 0000000..ffcedc6
 +
 +			camprobe_read(adap, addr, 0x300a, true, e, 2);
 +			camprobe_read(adap, addr, 0xf0, false, f, 2);
++			if (addr >= 0x50 && addr <= 0x57) {
++				u8 head[32];
++
++				if (!camprobe_read(adap, addr, 0x0000, true, head, sizeof(head)))
++					dev_info(cp->dev, "%pOF: 0x%02x eeprom: %*ph\n", bus, addr,
++						 (int)sizeof(head), head);
++			}
 +			dev_info(cp->dev, "%pOF: 0x%02x answers: [0x0000]=%02x%02x [0x0004]=%02x%02x [0x0016]=%02x%02x [0x0716]=%02x%02x [0x300a]=%02x%02x [8-bit 0xf0]=%02x%02x\n",
 +				 bus, addr, a[0], a[1], d[0], d[1], b[0], b[1], c[0], c[1], e[0], e[1], f[0], f[1]);
 +			found++;
@@ -203,6 +210,10 @@ index 0000000..ffcedc6
 +	if (ret)
 +		return dev_err_probe(dev, ret, "power domain\n");
 +
++	/* Vendor DT runs the camera IO (cam_vio) at 1.8 V; L13A defaults lower. */
++	ret = regulator_set_voltage(cp->supplies[0].consumer, 1800000, 1800000);
++	if (ret)
++		dev_warn(dev, "vio to 1.8 V: %d\n", ret);
 +	ret = regulator_bulk_enable(ARRAY_SIZE(cp->supplies), cp->supplies);
 +	if (ret) {
 +		dev_err(dev, "enable supplies: %d\n", ret);
@@ -217,10 +228,10 @@ index 0000000..ffcedc6
 +	}
 +	for (i = 0; cp->enables && i < cp->enables->ndescs; i++)
 +		gpiod_set_value_cansleep(cp->enables->desc[i], 1);
-+	usleep_range(2000, 3000);
++	usleep_range(5000, 6000);
 +	for (i = 0; cp->resets && i < cp->resets->ndescs; i++)
 +		gpiod_set_value_cansleep(cp->resets->desc[i], 0);
-+	msleep(30);
++	msleep(60);
 +
 +	dev_info(dev, "cameras powered (%d mclks at %u Hz), scan 1: reset lines high\n",
 +		 cp->num_clks, CAMPROBE_MCLK_HZ);
