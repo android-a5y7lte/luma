@@ -257,7 +257,10 @@ EOF
 keep_address() {
   local last=
   while :; do
-    for iface in $(ip -br link | awk '/^enx/{print $1}'); do
+    # Only the phone's own link: the stage 2 gadget has a fixed host-side MAC
+    # (02:4c:55:4d:41:02). Another USB network (a tethering phone) must not
+    # get the address, or the phone cannot reach the root.
+    for iface in $(ip -br link | awk 'tolower($3)=="02:4c:55:4d:41:02"{print $1}'); do
       if ! ip -br addr show dev "$iface" | grep -q "$host_ip/"; then
         command -v nmcli >/dev/null && nmcli device set "$iface" managed no 2>/dev/null || true
         ip addr replace "$host_ip/24" dev "$iface" 2>/dev/null || true
