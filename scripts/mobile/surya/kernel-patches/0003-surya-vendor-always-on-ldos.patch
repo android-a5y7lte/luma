@@ -1,0 +1,18 @@
+--- a/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
+@@ -505,3 +505,15 @@
+ 		bias-disable;
+ 	};
+ };
++
++/*
++ * The vendor DT keeps PM6150L L7C and L8C always on. Mainline has no user
++ * for them and turns them off once boot settles; match the vendor.
++ */
++&vreg_l7c_3p0 {
++	regulator-always-on;
++};
++
++&vreg_l8c_1p8 {
++	regulator-always-on;
++};

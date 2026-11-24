@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Boot policy for the POCO X3 NFC. Format, page size and offsets come from
+# socs/qcom/sm7150/soc.toml.
+schema = 1
+partition = "boot"
+# Expected 128 MiB; confirm on the phone with
+# `fastboot getvar partition-size:boot` (0x8000000) before flashing anything.
+partition_size = 134217728
+# Xiaomi's ABL quietly refuses (back to fastboot) a boot image whose header
+# carries no OS version or patch level. These are the values the ios-surya
+# port's images boot with on this phone; Luma's FP6 profile uses 2099-12-31.
+os_version = "17.0.0"
+os_patch_level = "2035-06-01"
+
+[cmdline]
+# Fixed arguments, in order. Experimental: SELinux stays permissive during
+# bring-up (docs/devices.md); enforcing=1 is required before tier community.
+args = [
+  "quiet",
+  "splash",
+  "plymouth.ignore-serial-consoles",
+  "console=tty0",
+  "pmos_rootfsopts=defaults",
+  "rootwait",
+  "ro",
+  "init=/init",
+  "enforcing=0",
+  # Keep boot-time interconnect/power votes until every consumer probes; the
+  # default timeout drops them ~30 s in and the display stalls (vblank).
+  "fw_devlink.sync_state=strict",
+]
+generated = ["pmos_root_uuid", "pmos_boot_uuid", "ostree"]
+forbidden = ["selinux=0", "lsm="]
+
+[avb]
+# No AVB footer. Xiaomi's ABL only boots a non-stock image with an unlocked
+# bootloader and verification disabled in vbmeta (INSTALL.md).
+footer = "none"
+vbmeta = "disabled-verification"
+
+[dtbo]
+# Luma ships its own complete DTB in the boot image. The stock overlays are
+# written for the Android kernel's DTB and must not apply to it.
+policy = "blank"
+partitions = ["dtbo"]

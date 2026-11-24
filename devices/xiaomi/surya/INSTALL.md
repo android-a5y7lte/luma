@@ -1,0 +1,196 @@
+# Xiaomi POCO X3 NFC (surya)
+
+**Experimental bring-up.** No Luma image for this phone has been published or
+qualified. These steps are for the maintainer and other porters, who build
+the images themselves (see "Building"). Nothing here is offered to people who
+did not go looking for it.
+
+The kernel is sm7150-mainline's (`scripts/mobile/surya/build-kernel.sh`), plus
+the surya changes in `scripts/mobile/surya/kernel-patches/`, until the
+`sm7150` family branch exists in SimplyLuma/linux and carries them; the
+`[kernel] tag` in `device.toml` names the release that will.
+
+## Building
+
+On an aarch64 machine (or with `ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-`):
+
+```sh
+scripts/mobile/surya/build-u-boot.sh out/u-boot
+scripts/mobile/surya/build-kernel.sh out/kernel
+scripts/mobile/surya/build-debug-initramfs.sh out/kernel out/initramfs.cpio.gz
+for mode in debug nbd nbd-safe; do
+  scripts/mobile/surya/build-boot-image.sh out/kernel out/initramfs.cpio.gz \
+    out/luma-surya-$mode-huaxing.img huaxing $mode
+done
+```
+
+`debug` is stage 1 below; `nbd` and `nbd-safe` are the stage 2 images
+(`nbd-safe` keeps the remote processor drivers from auto-loading, which is
+what the Wi-Fi/sound service expects). The stage 2 root is Luma's generic
+phone userdata image, `scripts/mobile/build-phone-userdata.sh --repo REPO
+--ref luma/1/aarch64/nightly --output luma-phone-userdata.simg --size 24G`
+from a pull of `https://dl.simplyluma.com/os/repo`, zstd-compressed, and
+`out/kernel`'s `modules-*.tar.zst`. The file names below are the ones the
+maintainer's builds use.
+
+This profile targets the POCO X3 NFC (`surya`, M2007J20CG) with the **Huaxing**
+display panel. The POCO X3 (`karna`, India) and phones with the Tianma panel
+need a different device tree; do not boot this image on them.
+
+## What works
+
+Stage 1 (2026-11-21): kernel 7.1.0-rc3 from sm7150-mainline with Luma's
+options, started from U-Boot: eight CPUs, display, UFS storage, USB
+networking.
+
+Stage 2 (2026-11-22), the Luma ARM nightly 1.0.0-nightly.20261119.2 with its
+root served from the computer over USB, booted with
+`luma-surya-stage2-usb-root-safe-huaxing.img`: Luma's systemd, OSTree
+deployment and services start, greenboot reports GREEN, GDM and GNOME Shell
+show the lock screen on the Huaxing panel, touch works (Novatek NT36672 with
+its firmware), the on-screen keyboard works once a keyboard layout is set,
+login as `luma` works, SSH over USB works, Bluetooth controller (WCN399x)
+detected.
+
+Wi-Fi works (tested 2026-11-23): the safe image keeps the DSP modules from
+auto-loading; one minute after boot `luma-surya-wifi.timer` starts rmtfs,
+Fedora's `tqftpserv` (the modem reads `wlanmdsp.mbn` through it), then only
+the modem (`qcom_q6v5_pas`) and ath10k. Steps are logged in
+`/var/log/luma-surya-wifi.log`. Starting the modem early in boot reset the
+phone once, so keep this order. ath10k then brings up
+`wld0` (random MAC; the board has none stored where ath10k looks).
+
+Speaker works (tested 2026-11-23): the same service then starts the audio
+DSP on its own and loads the "POCO X3" sound card (`snd_soc_sm8250`) and its
+TAS2562/TAS2564 amplifiers. Fedora's alsa-ucm-conf has no POCO X3 profile,
+so serve-usb-root.sh adds sm7150-mainline's (`Xiaomi/surya/HiFi.conf`).
+The speaker is silent with 24-bit audio, so a WirePlumber rule makes PipeWire
+use 16-bit (`S16LE`).
+
+Double tap to wake works (tested 2026-11-23) with the kernel patch in
+`scripts/mobile/surya/kernel-patches/`: the one-minute Wi-Fi/sound service sets
+`nt36xxx_spi_ts.wake_gesture` and `panel_huaxing_nt36672c.stay_powered`, so
+screen-off keeps the panel powered and the touch controller in gesture mode.
+Write N to both to turn it off (a little less standby power).
+
+Also working (tested 2026-11-23/24 on the Alpha 1 base): GPU acceleration
+(Adreno 618 with `qcom/a630_sqe.fw` and `qcom/a630_gmu.bin`), vibration
+(AW8624 through feedbackd), Bluetooth (pairs and connects; its address is a
+placeholder until the board's is read), battery and charger reporting.
+
+Boot needs `fw_devlink.sync_state=strict` (in `boot.toml`): with the default
+timeout the boot-time interconnect and power votes drop about 30 s in, before
+the modem, ADSP and camera consumers have probed, the display stops
+(`vblank wait timed out`) and the phone resets. Suspend is masked: with the
+root served over USB, suspending (the login screen does it after a few idle
+minutes) drops the USB link and the root, and the phone resets.
+
+Not yet: starting the compute DSP; microphone and earpiece (not in mainline);
+cameras. A bring-up scan (`luma-camprobe`, kernel-patches/0002) powers the
+five camera modules as the vendor DT does and finds their EEPROMs, the main
+module's AF driver and one sensor at 0x38 on CCI1, but the other four image
+sensors do not answer yet.
+
+## Before you start
+
+1. Unlock the bootloader with Xiaomi's official unlock tool. Unlocking wipes
+   the phone.
+2. Back up anything you need from Android. Installing Luma (stage 2) replaces
+   userdata.
+3. Check the panel: in Android, `cat /proc/cmdline` over `adb shell` names
+   either `huaxing` or `tianma` in the display argument.
+4. Install `fastboot` on your computer and boot the phone to fastboot
+   (Volume Down + Power).
+
+## Stage 1: RAM boot through U-Boot
+
+Xiaomi's bootloader applies the overlays in the `dtbo` partition to the
+device tree it boots. They are written for Android's device tree, and with
+the mainline one the boot fails: the phone is back in fastboot after
+`Booting OKAY`. As for postmarketOS, `dtbo` must be erased once. Android
+needs `dtbo`, so back it up first and restore it to go back. Nothing else
+is written.
+
+Back up `dtbo` from a recovery with root adb (LineageOS recovery, TWRP or
+OrangeFox), then check that both hashes match:
+
+```sh
+adb shell 'dd if=/dev/block/by-name/dtbo of=/tmp/dtbo.img && sha256sum /tmp/dtbo.img'
+adb pull /tmp/dtbo.img surya-backup-dtbo.img
+sha256sum surya-backup-dtbo.img
+adb reboot bootloader
+```
+
+Erase `dtbo` and RAM-boot U-Boot (`u-boot-surya-huaxing.img` from the
+build's U-Boot artifact):
+
+```sh
+fastboot getvar product            # must print: surya
+fastboot erase dtbo
+fastboot boot u-boot-surya-huaxing.img
+```
+
+U-Boot finds no Luma install and stops at "Press any key to continue".
+Press a volume key, choose "Enable fastboot mode" with the volume keys and
+Power, then RAM-boot Linux through U-Boot's fastboot (it may need root on
+the computer, as U-Boot uses different USB IDs):
+
+```sh
+fastboot boot luma-surya-stage1-huaxing-v2.img
+```
+
+A good result is "Luma on POCO X3 NFC: stage 1" on the screen and a USB
+network device on the computer. Give it 172.16.42.2/24, then
+`telnet 172.16.42.1` for a shell; `dmesg` shows how far the hardware came
+up. Holding Power for 10 seconds restarts the phone.
+
+To go back to Android:
+
+```sh
+fastboot flash dtbo surya-backup-dtbo.img
+```
+
+## Stage 2: Luma with its root on the computer (USB)
+
+Nothing is written to the phone: the root file system stays on the computer
+and the phone reads and writes it over the USB network (NBD). It is slower
+than a real install, but userdata, and whatever is on it, is left alone.
+
+You need, from one build: Luma's generic phone userdata image
+(`luma-phone-userdata.simg.zst`, the build's "luma-phone-userdata" artifact,
+made when the run was started with "rootfs" or the commit names `[rootfs]`),
+and from the stage 1 artifact `modules-*.tar.zst`,
+`luma-surya-stage2-usb-root-huaxing.img` and `serve-usb-root.sh`.
+
+On the computer (the first run unpacks and prepares the image, adding the
+surya modules and the phone's firmware, which it downloads itself):
+
+```sh
+sudo apt install zstd android-sdk-libsparse-utils qemu-utils git
+sudo ./serve-usb-root.sh luma-phone-userdata.simg.zst modules-*.tar.zst
+```
+
+On the phone, with `dtbo` erased as in stage 1: RAM-boot U-Boot, choose
+"Enable fastboot mode", then
+
+```sh
+fastboot boot luma-surya-stage2-usb-root-huaxing.img
+```
+
+The script sees the phone's USB network and starts serving; the phone
+connects, mounts LumaRoot and starts Luma's systemd. If it cannot, it stays in
+the stage 1 debug shell (`telnet 172.16.42.1`). Keep the cable in and the
+script running: the phone has no root without them.
+
+## Firmware
+
+`firmware.manifest` lists the firmware this phone needs, by name and SHA-256.
+The files come from the phone's own firmware, as collected by the
+sm7150-mainline project
+(<https://github.com/sm7150-mainline/firmware-xiaomi-surya>). They are not in
+this repository and are not redistributed by Luma.
+
+## Going back to Android
+
+Flash the official MIUI fastboot ROM for your region with Xiaomi's flash tool,
+choosing "clean all" and never "clean all and lock".
