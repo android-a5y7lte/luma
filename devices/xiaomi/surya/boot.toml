@@ -25,6 +25,9 @@ args = [
   "ro",
   "init=/init",
   "enforcing=0",
+  # Keep boot-time interconnect/power votes until every consumer probes; the
+  # default timeout drops them ~30 s in and the display stalls (vblank).
+  "fw_devlink.sync_state=strict",
 ]
 generated = ["pmos_root_uuid", "pmos_boot_uuid", "ostree"]
 forbidden = ["selinux=0", "lsm="]

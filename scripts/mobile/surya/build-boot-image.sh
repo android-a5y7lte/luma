@@ -29,7 +29,12 @@ soc = tomllib.load(open(f"{root}/socs/qcom/sm7150/soc.toml", "rb"))
 boot = tomllib.load(open(f"{root}/devices/xiaomi/surya/boot.toml", "rb"))
 o = soc["boot"]["offsets"]
 assert soc["boot"]["format"] == "android-boot-v2"
-debug = ["console=tty0", "loglevel=7", "clk_ignore_unused", "pd_ignore_unused", "rdinit=/init", "enforcing=0"]
+# fw_devlink.sync_state=strict: keep the boot-time interconnect/power votes
+# until every consumer has probed. With the default timeout they drop ~30 s
+# in, before the modem/ADSP start, and the display stalls (vblank timeout) and
+# the phone resets.
+debug = ["console=tty0", "loglevel=7", "clk_ignore_unused", "pd_ignore_unused",
+         "fw_devlink.sync_state=strict", "rdinit=/init", "enforcing=0"]
 if mode == "debug":
     args = debug
 elif mode == "nbd":
