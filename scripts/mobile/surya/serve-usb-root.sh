@@ -211,8 +211,18 @@ case "$(uname -r)" in
 esac
 for m in $mods; do modprobe "$m" 2>/dev/null; done
 case "$(uname -r)" in 7.1.*) ;; *)
-  # RedLicorice's TAS2562 amps start muted and on an empty channel.
+  # The ADSP can come up without its audio services (no q6afe clocks), which
+  # leaves the LPASS pins and with them the whole card waiting. Restarting the
+  # ADSP once registers them again.
   sleep 3
+  if ! grep -q 'POCO X3' /proc/asound/cards; then
+    a=$(dirname "$(grep -l '^adsp$' /sys/class/remoteproc/*/name | head -1)")
+    step "sound card missing, restarting the ADSP"
+    echo stop > "$a/state"; sleep 3; echo start > "$a/state"; sleep 15
+    for m in $mods; do modprobe "$m" 2>/dev/null; done
+    sleep 5
+  fi
+  # RedLicorice's TAS2562 amps start muted and on an empty channel.
   for s in Left Right; do
     amixer -c0 -q cset name="$s ASI1 Sel" 3
     amixer -c0 -q cset name="$s Digital Volume Control" 106
