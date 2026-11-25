@@ -225,8 +225,8 @@ case "$(uname -r)" in 7.1.*) ;; *)
   # RedLicorice's TAS2562 amps start muted and on an empty channel.
   for s in Left Right; do
     amixer -c0 -q cset name="$s ASI1 Sel" 3
-    amixer -c0 -q cset name="$s Digital Volume Control" 106
-    amixer -c0 -q cset name="$s Amp Gain Volume" 20
+    amixer -c0 -q cset name="$s Digital Volume Control" 110
+    amixer -c0 -q cset name="$s Amp Gain Volume" 26
   done
   # Camera sensors can probe before their supplies are up; probe the ones
   # left unbound again, so CAMSS completes its graph.
