@@ -33,6 +33,8 @@ git -C "$src" log -1 --format='kernel source: %H %s'
 patches=( "$here"/kernel-patches/*.patch )
 case "$repo" in
   */sm7150-mainline/linux|*/sm7150-mainline/linux.git) ;;
+  */RedLicorice/linux-surya|*/RedLicorice/linux-surya.git)
+    patches=( "$here"/kernel-patches-linux-surya/*.patch ) ;;
   *) echo "kernel patches skipped for $repo"; patches=() ;;
 esac
 for patch in "${patches[@]}"; do

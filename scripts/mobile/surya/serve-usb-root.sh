@@ -225,6 +225,12 @@ case "$(uname -r)" in 7.1.*) ;; *)
       *imx682*|*s5k3t2*|*hi1337*|*hi259*|*ov02b1b*)
         [ -e "$dev/driver" ] || basename "$dev" > /sys/bus/i2c/drivers_probe ;;
     esac
+  done
+  # Let a session that started before the camera graph was complete find
+  # the cameras (WirePlumber enumerates them once).
+  sleep 3
+  for u in $(loginctl list-users --no-legend 2>/dev/null | awk '$1 >= 1000 {print $2}'); do
+    systemctl --user -M "$u@" restart wireplumber 2>/dev/null
   done ;;
 esac
 sleep 5
