@@ -82,6 +82,10 @@ class CameraPortal:
             self.cancel, requested)
 
     def devices(self):
+        from dataclasses import replace
+        from prairie_apps import camera_backend
+        _presentation = camera_backend._FP6_CAMERA_PRESENTATION
+        _hidden = getattr(camera_backend, '_HIDDEN_CAMERAS', frozenset())
         """Worker-thread discovery; return real photographic Video/Source nodes."""
         Gst.init(None)
         self.provider = Gst.DeviceProviderFactory.get_by_name('pipewiredeviceprovider')
@@ -119,13 +123,22 @@ class CameraPortal:
             location = props.get_string('api.libcamera.location') or props.get_string('api.libcamera.Location') or ''
             location = 'front' if location in ('front', 'CameraLocationFront') else 'back' if location in ('back', 'CameraLocationBack') else 'external'
             seen.add(identifier)
+            camera_path = props.get_string('api.libcamera.path') or ''
+            if camera_path in _hidden:
+                continue
             label = 'Front camera' if location == 'front' else 'Rear camera' if location == 'back' else props.get_string('node.description') or candidate.get_display_name()
             devices.append(CameraDevice(identifier=identifier,
                 label=label,
                 location=location, preview_width=width, preview_height=height,
                 viewfinder_width=width, viewfinder_height=height,
                 still_width=width, still_height=height, portal_device=candidate))
-        return tuple(devices)
+        ranks = []
+        for device in devices:
+            props = device.portal_device.get_properties()
+            path = props.get_string('api.libcamera.path') or '' if props is not None else ''
+            label, rank = _presentation.get(path, (device.label, 10 if device.location == 'back' else 20))
+            ranks.append((rank, len(ranks), replace(device, label=label) if label != device.label else device))
+        return tuple(device for _, _, device in sorted(ranks))
 
     def close(self):
         if self.closed:
