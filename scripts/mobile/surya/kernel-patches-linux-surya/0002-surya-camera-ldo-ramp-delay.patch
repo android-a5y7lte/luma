@@ -1,0 +1,43 @@
+From: Luma surya port
+Subject: [PATCH] arm64: dts: qcom: sm7150-xiaomi-surya: settle time for the WL2866D camera LDOs
+
+The sensors get their first CCI write 1 ms after the supplies are enabled;
+the HI1337 (and at boot the HI259) then times out (-110) on the first
+write, which also fails a capture that restarts the ultrawide stream.
+Give each WL2866D output 10 ms after enable.
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi b/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
+index bd208b3..155da77 100644
+--- a/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm7150-xiaomi-surya.dtsi
+@@ -699,12 +699,14 @@
+ 		regulators {
+ 			cam_dvdd1: dvdd1 {
+ 				regulator-name = "cam_dvdd1";
++				regulator-enable-ramp-delay = <10000>;
+ 				regulator-min-microvolt = <1104000>;
+ 				regulator-max-microvolt = <1200000>;
+ 			};
+ 
+ 			cam_dvdd2: dvdd2 {
+ 				regulator-name = "cam_dvdd2";
++				regulator-enable-ramp-delay = <10000>;
+ 				regulator-min-microvolt = <1104000>;
+ 				regulator-max-microvolt = <1200000>;
+ 			};
+@@ -712,6 +714,7 @@
+ 			/* front S5K3T2, depth, macro Hi-259, ultrawide Hi-1337 */
+ 			cam_avdd1: avdd1 {
+ 				regulator-name = "cam_avdd1";
++				regulator-enable-ramp-delay = <10000>;
+ 				regulator-min-microvolt = <2800000>;
+ 				regulator-max-microvolt = <2800000>;
+ 			};
+@@ -719,6 +722,7 @@
+ 			/* main IMX682 */
+ 			cam_avdd2: avdd2 {
+ 				regulator-name = "cam_avdd2";
++				regulator-enable-ramp-delay = <10000>;
+ 				regulator-min-microvolt = <2900000>;
+ 				regulator-max-microvolt = <2900000>;
+ 			};
