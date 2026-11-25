@@ -31,16 +31,22 @@ if [ -n "${check:-}" ]; then
   u=$(loginctl list-users --no-legend | awk '$1 >= 1000 {print $2; exit}')
   uid=$(id -u "$u")
   runuser -u "$u" -- env XDG_RUNTIME_DIR=/run/user/$uid python3 - <<'EOF'
-import json, subprocess
-d = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True).stdout or "[]")
-n = {o["id"]: o["info"]["props"] for o in d if o.get("type") == "PipeWire:Interface:Node" and o.get("info")}
-for o in d:
-    if o.get("type") == "PipeWire:Interface:Link" and o.get("info"):
-        s = n.get(o["info"]["output-node-id"], {}); t = n.get(o["info"]["input-node-id"], {})
-        if s.get("media.class") == "Stream/Output/Audio" and not s.get("node.name", "").startswith(("output.loopback", "surya_media")):
-            who = s.get("application.process.binary") or s.get("node.name")
-            lane = "fixed" if t.get("node.name", "").startswith("alsa_output") else "volume keys"
-            print(f"{who:16} {s.get('event.id', s.get('media.name', '')):16} -> {lane}")
+import json, subprocess, time
+print("for 20 s: type, tap the keypad and play something", flush=True)
+seen = set(); end = time.time() + 20
+while time.time() < end:
+    d = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True).stdout or "[]")
+    n = {o["id"]: o["info"]["props"] for o in d if o.get("type") == "PipeWire:Interface:Node" and o.get("info")}
+    for o in d:
+        if o.get("type") == "PipeWire:Interface:Link" and o.get("info"):
+            s = n.get(o["info"]["output-node-id"], {}); t = n.get(o["info"]["input-node-id"], {})
+            if s.get("media.class") == "Stream/Output/Audio" and not s.get("node.name", "").startswith(("output.loopback", "surya_media")):
+                who = s.get("application.process.binary") or s.get("node.name")
+                lane = "fixed (clicks)" if t.get("node.name", "").startswith("alsa_output") else "volume keys"
+                k = (who, s.get("event.id", s.get("media.name", "")), lane)
+                if k not in seen:
+                    seen.add(k); print(f"{k[0]:16} {k[1]:16} -> {lane}", flush=True)
+    time.sleep(0.15)
 EOF
   exit 0
 fi
