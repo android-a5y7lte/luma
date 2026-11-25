@@ -73,6 +73,21 @@ _FP6_CAMERA_PRESENTATION = {
     "/base/soc@0/cci@ac16000/i2c-bus@1/camera@3d": ("Front", 2),
 }
 
+# Xiaomi POCO X3 NFC (surya): start on the IMX682 main sensor rather than
+# whichever back sensor libcamera lists first (the HI1337 ultrawide), and
+# keep the 2 MP OV02B1B depth sensor, which is not a photographic camera,
+# out of the cycle.
+_SURYA_CAMERA_PRESENTATION = {
+    "/base/soc@0/cci@ac4a000/i2c-bus@0/camera@1a": ("Main", 0),
+    "/base/soc@0/cci@ac4b000/i2c-bus@0/camera@21": ("Wide", 1),
+    "/base/soc@0/cci@ac4b000/i2c-bus@0/camera@38": ("Macro", 2),
+    "/base/soc@0/cci@ac4a000/i2c-bus@1/camera@10": ("Front", 3),
+}
+_HIDDEN_CAMERAS = frozenset({
+    "/base/soc@0/cci@ac4a000/i2c-bus@1/camera@3c",
+})
+_FP6_CAMERA_PRESENTATION.update(_SURYA_CAMERA_PRESENTATION)
+
 # The FP6 device tree describes the S5KKD1SP front sensor as mounted at 90
 # degrees, the same as the IMX896 main sensor, and the front preview, stills
 # and taps came out upside down. Its mount is 270 degrees; this replaces the
@@ -348,6 +363,8 @@ def list_camera_devices() -> tuple[CameraDevice, ...]:
         if match is None:
             continue
         name, identifier = match.groups()
+        if identifier in _HIDDEN_CAMERAS:
+            continue
         normalized = name.casefold()
         location = "front" if "front" in normalized else "back" if "back" in normalized else "external"
         ordinal = sum(device.location == location for device in devices) + 1
