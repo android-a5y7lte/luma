@@ -218,8 +218,14 @@ case "$(uname -r)" in 7.1.*) ;; *)
     amixer -c0 -q cset name="$s Digital Volume Control" 106
     amixer -c0 -q cset name="$s Amp Gain Volume" 20
   done
-  # The ultrawide sensor probes before its supplies are up; probe it again.
-  [ -e /sys/bus/i2c/devices/14-0021/driver ] || echo 14-0021 > /sys/bus/i2c/drivers_probe ;;
+  # Camera sensors can probe before their supplies are up; probe the ones
+  # left unbound again, so CAMSS completes its graph.
+  for dev in /sys/bus/i2c/devices/*; do
+    case "$(tr '\0' ' ' < "$dev/of_node/compatible" 2>/dev/null)" in
+      *imx682*|*s5k3t2*|*hi1337*|*hi259*|*ov02b1b*)
+        [ -e "$dev/driver" ] || basename "$dev" > /sys/bus/i2c/drivers_probe ;;
+    esac
+  done ;;
 esac
 sleep 5
 step "sound: $(grep -o 'POCO X3' /proc/asound/cards | head -1 || echo 'no sound card')"
