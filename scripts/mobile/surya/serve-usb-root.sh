@@ -207,9 +207,20 @@ sleep 10
 step "sound card"
 case "$(uname -r)" in
   7.1.*) mods="snd_soc_tas2562 snd_soc_sm8250" ;;
-  *) mods="soundwire_qcom snd_soc_lpass_rx_macro snd_soc_lpass_va_macro snd_soc_wcd937x_sdw snd_soc_wcd937x snd_soc_tas2562 snd_soc_sm8250" ;;
+  *) mods="snd_soc_lpass_tx_macro snd_soc_lpass_rx_macro snd_soc_lpass_va_macro snd_soc_lpass_wsa_macro soundwire_qcom snd_soc_wcd937x_sdw snd_soc_wcd937x snd_soc_tas2562 snd_soc_sm8250" ;;
 esac
 for m in $mods; do modprobe "$m" 2>/dev/null; done
+case "$(uname -r)" in 7.1.*) ;; *)
+  # RedLicorice's TAS2562 amps start muted and on an empty channel.
+  sleep 3
+  for s in Left Right; do
+    amixer -c0 -q cset name="$s ASI1 Sel" 3
+    amixer -c0 -q cset name="$s Digital Volume Control" 106
+    amixer -c0 -q cset name="$s Amp Gain Volume" 20
+  done
+  # The ultrawide sensor probes before its supplies are up; probe it again.
+  [ -e /sys/bus/i2c/devices/14-0021/driver ] || echo 14-0021 > /sys/bus/i2c/drivers_probe ;;
+esac
 sleep 5
 step "sound: $(grep -o 'POCO X3' /proc/asound/cards | head -1 || echo 'no sound card')"
 # Double tap to wake (kernel patch in kernel-patches/): only once the session
