@@ -103,7 +103,7 @@ wireplumber.components = [
 ]
 wireplumber.profiles = {
   main = {
-    hooks.linking.target.surya-fixed-clicks = optional
+    hooks.linking.target.surya-fixed-clicks = required
   }
 }
 EOF
