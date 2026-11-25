@@ -135,7 +135,7 @@ jobs:
           done
           release=$(cat out/kernel/kernelrelease)
           cp out/kernel/config-* dist/
-          cp scripts/mobile/surya/serve-usb-root.sh dist/
+          cp scripts/mobile/surya/serve-usb-root.sh scripts/mobile/surya/surya-audio-setup.sh dist/
           tar -C out/kernel/modules -I 'zstd -19 -T0' -cf "dist/modules-$release.tar.zst" .
           {
             echo "kernel release: $release"

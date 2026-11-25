@@ -167,6 +167,12 @@ monitor.alsa.rules = [
 ]
 EOF
 
+  # Speaker setup: volume keys for players, clicks at a fixed level
+  # (surya-audio-setup.sh, shipped next to this script).
+  if [ -f "$(dirname "$(realpath "$0")")/surya-audio-setup.sh" ]; then
+    sh "$(dirname "$(realpath "$0")")/surya-audio-setup.sh" --root "$dep"
+  fi
+
   # The root lives on the PC over the USB link: a suspend drops the USB
   # gadget, the root with it, and the phone resets (seen at the login screen).
   for t in sleep suspend hibernate hybrid-sleep suspend-then-hibernate; do
@@ -223,10 +229,11 @@ case "$(uname -r)" in 7.1.*) ;; *)
     sleep 5
   fi
   # RedLicorice's TAS2562 amps start muted and on an empty channel.
+  # Amp gain 26 reset the phone at full volume (power dip); 22 holds.
   for s in Left Right; do
     amixer -c0 -q cset name="$s ASI1 Sel" 3
     amixer -c0 -q cset name="$s Digital Volume Control" 110
-    amixer -c0 -q cset name="$s Amp Gain Volume" 26
+    amixer -c0 -q cset name="$s Amp Gain Volume" 22
   done
   # Camera sensors can probe before their supplies are up; probe the ones
   # left unbound again, so CAMSS completes its graph.
@@ -240,6 +247,8 @@ case "$(uname -r)" in 7.1.*) ;; *)
   # the cameras (WirePlumber enumerates them once).
   sleep 3
   for u in $(loginctl list-users --no-legend 2>/dev/null | awk '$1 >= 1000 {print $2}'); do
+    # The card can come back after the ADSP restart without the user's access.
+    setfacl -m "u:$u:rw" /dev/snd/* 2>/dev/null
     systemctl --user -M "$u@" restart wireplumber 2>/dev/null
   done ;;
 esac
