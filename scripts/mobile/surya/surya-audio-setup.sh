@@ -4,9 +4,11 @@
 #  - Volume keys control a "Speaker" output (surya_media) that plays into the
 #    hardware speaker, which stays at 100%. Every player (Chrome, music,
 #    videos, notifications, ringtones) goes there.
-#  - Keypad and keyboard clicks (event "button-pressed") skip that output and
-#    play on the hardware speaker directly, so the volume keys never change
-#    them and they never duck the music. They are matched by sound, not by
+#  - Short system sounds (any sound with an event id and the Notification
+#    role: keypad and keyboard clicks, the volume-key sound) skip that output
+#    and play on the hardware speaker at a fixed level. Luma's volume keys
+#    follow the sound role that is playing, so these must stay out of the
+#    role loopbacks, or the keys change them instead of the music. They are matched by sound, not by
 #    program: an earlier PULSE_SINK on the shell was inherited by every app it
 #    opened, and Chrome then bypassed the volume keys.
 #  - Players always follow the volume-key output (no remembered old outputs).
@@ -108,14 +110,18 @@ EOF
 write_hook() {
   install -d -m 0755 "$1/linking"
   cat > "$1/linking/surya-fixed-clicks.lua" <<EOF
--- surya: keypad and keyboard clicks play on the hardware speaker at a fixed
--- level, outside the volume-key output, and without ducking the music.
+-- surya: short system sounds (keypad and keyboard clicks, the volume-key
+-- sound) play on the hardware speaker at a fixed level. Luma's volume keys
+-- control whichever sound role is playing; these sounds have the
+-- Notification role, so in the role loopback they took the volume keys over
+-- (keys changed the clicks, not the music) and ducked the music.
 -- Matched by sound (event.id), so nothing is passed on to other apps.
 lutils = require ("linking-utils")
 log = Log.open_topic ("s-linking")
 
 local HW = "$HW"
-local CLICKS = { ["button-pressed"] = true, ["button-released"] = true }
+local caught = 0
+log:warning ("surya-fixed-clicks loaded")
 
 SimpleEventHook {
   name = "linking/surya-fixed-clicks",
@@ -132,8 +138,14 @@ SimpleEventHook {
     if target then
       return
     end
-    local id = si_props ["event.id"] or si_props ["media.name"]
-    if id == nil or not CLICKS [id] then
+    local id = si_props ["event.id"]
+    local name = si_props ["media.name"]
+    if id == nil and (name == "button-pressed" or name == "button-released" or
+        name == "audio-volume-change") then
+      id = name
+    end
+    local role = si_props ["media.role"]
+    if id == nil or (role ~= nil and role ~= "Notification" and role ~= "event") then
       return
     end
     local hw = om:lookup {
@@ -141,7 +153,10 @@ SimpleEventHook {
       Constraint { "node.name", "=", HW },
     }
     if hw and lutils.canLink (si_props, hw) then
-      log:info (si, "surya: click '" .. id .. "' to the fixed speaker")
+      if caught < 3 then
+        caught = caught + 1
+        log:warning (si, "surya: '" .. id .. "' to the fixed speaker")
+      end
       event:set_data ("target", hw)
     end
   end
@@ -177,10 +192,8 @@ for home in /home/*; do
         "$home/.config/systemd/user/org.gnome.Shell@user.service.d/60-surya-system-sounds.conf" \
         "$home/.local/share/dbus-1/services/org.sigxcpu.Feedback.service"
   rmdir "$home/.config/systemd/user/org.gnome.Shell@user.service.d" 2>/dev/null || true
-  if [ -z "$scripts" ]; then
-    write_hook "$home/.local/share/wireplumber/scripts"
-    chown -R "$u:" "$home/.local/share/wireplumber"
-  fi
+  write_hook "$home/.local/share/wireplumber/scripts"
+  chown -R "$u:" "$home/.local/share/wireplumber"
   # Quieter clicks, once (keeps a level already set by hand).
   for theme in luma freedesktop; do
     dst=$home/.local/share/sounds/$theme/stereo/button-pressed.wav
