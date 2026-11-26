@@ -167,11 +167,11 @@ monitor.alsa.rules = [
 ]
 EOF
 
-  # Speaker setup: volume keys for players, clicks at a fixed level
-  # (surya-audio-setup.sh, shipped next to this script).
-  if [ -f "$(dirname "$(realpath "$0")")/surya-audio-setup.sh" ]; then
-    sh "$(dirname "$(realpath "$0")")/surya-audio-setup.sh" --root "$dep"
-  fi
+  # NOTE: surya-audio-setup.sh (per-role volume split with a surya_media
+  # loopback) is NOT applied here. Its loopback stalled the media path on a
+  # clean boot, so the image uses Luma's native role-loopback audio, which
+  # works. The script stays in the tree for the planned clean rebuild of the
+  # separation on top of the native channels (no custom media sink).
 
   # The root lives on the PC over the USB link: a suspend drops the USB
   # gadget, the root with it, and the phone resets (seen at the login screen).
