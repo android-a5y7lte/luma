@@ -17,6 +17,16 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Volume from 'resource:///org/gnome/shell/ui/status/volume.js';
 
+// St.BoxLayout's `vertical` was replaced by `orientation` in newer Clutter;
+// set whichever this shell understands.
+function setVertical(box) {
+    try {
+        box.orientation = Clutter.Orientation.VERTICAL;
+    } catch (e) {
+        try { box.vertical = true; } catch (e2) {}
+    }
+}
+
 // Role -> sink name, label and icon. "Media" prefers our surya_media sink
 // (what the volume keys drive); the rest are Luma's role loopbacks.
 const ROLES = [
@@ -41,11 +51,11 @@ const PillSlider = GObject.registerClass({
 }, class PillSlider extends St.BoxLayout {
     _init(role) {
         super._init({
-            vertical: true,
             style_class: 'surya-vol-col',
             reactive: false,
             x_align: Clutter.ActorAlign.CENTER,
         });
+        setVertical(this);
         this._role = role;
         this._value = 0;
         this._dragging = false;
@@ -177,11 +187,11 @@ class VolumePanel extends St.Widget {
         this.set_size(global.stage.width, global.stage.height);
 
         this._card = new St.BoxLayout({
-            vertical: true,
             style_class: 'surya-vol-card',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
+        setVertical(this._card);
         this.add_child(this._card);
 
         this._title = new St.Label({style_class: 'surya-vol-title', text: 'Media'});
