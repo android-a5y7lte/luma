@@ -1,0 +1,61 @@
+/* Surya Volume Panel — One UI "Media" style. */
+
+.surya-vol-backdrop {
+  background-color: rgba(0, 0, 0, 0.28);
+}
+
+.surya-vol-card {
+  background-color: rgba(22, 24, 29, 0.94);
+  border-radius: 30px;
+  padding: 22px 20px 18px 20px;
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
+}
+
+.surya-vol-title {
+  color: #f2f3f5;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.surya-vol-row {
+  spacing: 12px;
+}
+
+.surya-vol-col {
+  spacing: 8px;
+  min-width: 52px;
+}
+
+.surya-vol-value {
+  color: #f2f3f5;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 18px;
+}
+
+.surya-vol-pill {
+  width: 48px;
+  height: 300px;
+  border-radius: 24px;
+  background-color: rgba(255, 255, 255, 0.10);
+}
+
+.surya-vol-fill {
+  border-radius: 24px;
+  background-gradient-direction: vertical;
+  background-gradient-start: rgba(246, 236, 255, 0.92);
+  background-gradient-end: rgba(206, 116, 224, 0.95);
+}
+
+.surya-vol-icon {
+  icon-size: 22px;
+  color: #ffffff;
+  margin-bottom: 14px;
+}
+
+.surya-vol-label {
+  color: #c7ccd2;
+  font-size: 12px;
+}

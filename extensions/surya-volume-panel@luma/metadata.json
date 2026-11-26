@@ -1,0 +1,7 @@
+{
+  "uuid": "surya-volume-panel@luma",
+  "name": "Surya Volume Panel",
+  "description": "Samsung-style per-role volume panel for the POCO X3 (surya): one slider, expand for separate media / ring / notification / system / call / alarm sliders, each independently touchable. Wired to Luma's role loopbacks.",
+  "shell-version": ["48", "49", "50", "51"],
+  "version": 1
+}
