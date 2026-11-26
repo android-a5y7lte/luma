@@ -291,28 +291,63 @@ class VolumePanel extends St.Widget {
     }
 });
 
+const DBUS_IFACE = `
+<node>
+  <interface name="org.luma.SuryaVolume">
+    <method name="Toggle"/>
+    <method name="Open"/>
+    <method name="Close"/>
+  </interface>
+</node>`;
+
 export default class SuryaVolumePanelExtension extends Extension {
     enable() {
         this._mixer = Volume.getMixerControl();
         this._panel = new VolumePanel(this._mixer);
 
-        // Temporary trigger for iterating: a top-bar button. The final build
-        // opens the panel from the three-dots on the volume popup.
-        this._button = new St.Button({
-            style_class: 'panel-button surya-vol-trigger',
-            child: new St.Icon({icon_name: 'audio-volume-high-symbolic', style_class: 'system-status-icon'}),
-            can_focus: true,
-        });
-        this._button.connect('clicked', () => {
-            if (this._panel.visible)
-                this._panel.close();
-            else
-                this._panel.open();
-        });
-        Main.panel._rightBox.insert_child_at_index(this._button, 0);
+        // Test/trigger over D-Bus (reliable regardless of top-bar layout):
+        //   gdbus call --session -d org.luma.SuryaVolume \
+        //     -o /org/luma/SuryaVolume -m org.luma.SuryaVolume.Toggle
+        // The final build opens it from the three-dots on the volume popup.
+        this._ownerId = Gio.bus_own_name(
+            Gio.BusType.SESSION, 'org.luma.SuryaVolume',
+            Gio.BusNameOwnerFlags.NONE,
+            (conn) => {
+                this._dbus = Gio.DBusExportedObject.wrapJSObject(DBUS_IFACE, this);
+                this._dbus.export(conn, '/org/luma/SuryaVolume');
+            },
+            null, null);
+
+        // Also try a top-bar button (harmless if the layout hides it).
+        try {
+            this._button = new St.Button({
+                style_class: 'panel-button',
+                child: new St.Icon({icon_name: 'audio-volume-high-symbolic', style_class: 'system-status-icon'}),
+                can_focus: true,
+            });
+            this._button.connect('clicked', () => this.Toggle());
+            Main.panel._rightBox.insert_child_at_index(this._button, 0);
+        } catch (e) {}
     }
 
+    Toggle() {
+        if (this._panel.visible)
+            this._panel.close();
+        else
+            this._panel.open();
+    }
+    Open() { this._panel.open(); }
+    Close() { this._panel.close(); }
+
     disable() {
+        if (this._dbus) {
+            this._dbus.unexport();
+            this._dbus = null;
+        }
+        if (this._ownerId) {
+            Gio.bus_unown_name(this._ownerId);
+            this._ownerId = 0;
+        }
         if (this._button) {
             this._button.destroy();
             this._button = null;
